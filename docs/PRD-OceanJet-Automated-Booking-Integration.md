@@ -213,44 +213,47 @@ The system is designed as three independent, swappable layers. This modularity s
 ### System Components
 
 ```
-                                         ┌──────────────────────┐
-                                         │     Orchestrator     │
-                                         │  (operator-agnostic) │
-                                         │                      │
-┌─────────────────┐      API calls       │  - Queue polling     │
-│   Bookaway API  │◄───────────────────►│  - Booking intake    │
-│  (Web REST API)  │                      │  - Approval flow     │
-└─────────────────┘                      │  - Slack alerts      │
-                                         │  - Logging           │
-                                         │  - Scheduling        │
-                                         └──────────┬───────────┘
-                                                    │
-                                    ┌───────────────┼───────────────┐
-                                    ▼               ▼               ▼
-                            ┌──────────────┐ ┌────────────┐ ┌────────────┐
-                            │ Data Mapping │ │   Future   │ │   Future   │
-                            │   Config     │ │  Operator  │ │  Operator  │
-                            │  (OceanJet)  │ │   B cfg    │ │   C cfg    │
-                            └──────┬───────┘ └────────────┘ └────────────┘
-                                   │
-                                   ▼
-                            ┌──────────────┐
-                            │  Operator    │
-                            │  Interaction │
-                            │   Module     │
-                            │  (OceanJet)  │
-                            │              │
-                            │  RPA on      │
-                            │  Windows VM  │
-                            └──────┬───────┘
-                                   │
-                                   ▼
-                            ┌──────────────┐
-                            │ OceanJet     │
-                            │ PRIME        │
-                            │ (Desktop App │
-                            │  on Win VM)  │
-                            └──────────────┘
+Cloud/Server (TypeScript)                  Windows VM
+┌─────────────────────────┐                ┌──────────────────────┐
+│  Orchestrator Service   │   HTTP API     │  PRIME RPA Agent     │
+│                         │◄──────────────►│  (Python/pywinauto)  │
+│  - Bookaway API client  │                │                      │
+│  - Queue polling        │  POST /issue   │  Exposes:            │
+│  - Data mapping         │  GET  /health  │  POST /issue-tickets │
+│  - Booking routing      │                │  GET  /health        │
+│  - Approval flow        │                │                      │
+│  - Slack alerts         │                │  Drives PRIME to     │
+│  - Logging              │                │  issue tickets and   │
+│                         │                │  returns ticket #s   │
+│  Future:                │                └──────────┬───────────┘
+│  - Route to operator B  │                           │
+│                         │                           ▼
+│                         │                ┌──────────────────────┐
+│                         │   HTTP API     │  OceanJet PRIME      │
+│                         │◄──────────────►│  (Desktop App)       │
+│                         │                └──────────────────────┘
+│                         │
+│                         │   HTTP API     ┌──────────────────────┐
+│                         │◄──────────────►│  Future Operator     │
+│                         │                │  (Playwright/API)    │
+└─────────────────────────┘                └──────────────────────┘
+```
+
+**Processing Flow:**
+
+```
+┌──────────┐     ┌───────────┐     ┌───────────┐     ┌───────────┐     ┌──────────┐
+│  Poll    │     │  Claim    │     │ Translate │     │  Issue    │     │ Approve  │
+│ Bookaway │────►│  Booking  │────►│  Data     │────►│ Tickets   │────►│ Booking  │
+│  Queue   │     │           │     │ (Mapper)  │     │ (RPA/Mock)│     │ (API)    │
+└──────────┘     └───────────┘     └───────────┘     └───────────┘     └──────────┘
+      │                                                    │
+      │              On failure:                           │
+      │              ├─ Booking error → Release + Slack    │
+      │              ├─ System error → Stop loop + Slack   │
+      │              └─ Partial fail → Keep claimed + Slack│
+      │                                                    │
+      └────────────── Loop: next booking ◄─────────────────┘
 ```
 
 ### Layer 1: Orchestrator (Operator-Agnostic)
@@ -275,9 +278,10 @@ The "last mile" that actually issues tickets on the operator's system. For Ocean
 
 **Station Codes:**
 
-| Bookaway City | PRIME Code |
+| Bookaway City (API value) | PRIME Code |
 |---|---|
-| Bohol / Tagbilaran | TAG |
+| Bohol | TAG |
+| Tagbilaran City, Bohol Island | TAG |
 | Cebu | CEB |
 | Bacolod | BAC |
 | Batangas | BAT |
@@ -294,16 +298,21 @@ The "last mile" that actually issues tickets on the operator's system. For Ocean
 | Siquijor | SIQ |
 | Tubigon | TUB |
 | Maasin | MAA |
+| Maasin City, Leyte | MAA |
 | Surigao | SUR |
 | Palompon, Leyte | PAL |
 
+*Note: Some cities appear with multiple names in the Bookaway API (e.g., "Bohol" and "Tagbilaran City, Bohol Island" both map to TAG). All confirmed variants are included above.*
+
 **Accommodation Codes:**
 
-| Bookaway Class | PRIME Code |
+| Bookaway Class (API `lineClass` value) | PRIME Code |
 |---|---|
-| Tourist Class | TC |
-| Business Class | BC |
-| Open-Air | OA |
+| Tourist | TC |
+| Business | BC |
+| Open Air | OA |
+
+*Note: The API returns `items[0].product.lineClass` with values like "Tourist" (not "Tourist Class"). See `docs/bookaway-backoffice-API-documentation-v2.md` for corrected API field paths.*
 
 **Connecting Routes:**
 
@@ -382,5 +391,7 @@ This cycle repeats for every passenger in every booking, ~27,000 times per year.
 
 ## Appendix B: Reference Documents
 
-- **Bookaway Backoffice API Documentation:** `docs/bookaway-backoffice-API-documentation.md`
+- **Bookaway Backoffice API Documentation (Corrected):** `docs/bookaway-backoffice-API-documentation-v2.md` — based on live API validation
+- **Bookaway Backoffice API Documentation (Original):** `docs/bookaway-backoffice-API-documentation.md` — kept for reference, contains incorrect field paths
 - **OceanJet Inventory Reference Sheet:** `docs/oceanjet-inventory-reference-sheet.md`
+- **Implementation Status:** `docs/implementation-status.md` — current build progress and next steps
