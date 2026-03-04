@@ -1,0 +1,194 @@
+import type { BookingDetail } from '../../bookaway/types.js';
+import type {
+  TranslatedBooking,
+  PassengerData,
+  LegData,
+  BookingType,
+} from '../types.js';
+import {
+  resolveStationCode,
+  resolveAccommodationCode,
+  findConnectingRoute,
+} from './config.js';
+import { to12Hour } from '../../utils/time.js';
+
+/** Known extra info definition IDs from Bookaway */
+const EXTRA_INFO_IDS = {
+  AGE: '58f47da902e97f000888b000',
+  GENDER: '58f47db102e97f000888b001',
+};
+
+/**
+ * Extract age from passenger's extraInfos array.
+ */
+function extractAge(passenger: BookingDetail['items'][0]['passengers'][0]): string {
+  if (!passenger.extraInfos) return 'Unknown';
+  const ageInfo = passenger.extraInfos.find(
+    (info) => info.definition === EXTRA_INFO_IDS.AGE
+  );
+  return ageInfo?.value || 'Unknown';
+}
+
+/**
+ * Extract gender from passenger's extraInfos array.
+ */
+function extractGender(passenger: BookingDetail['items'][0]['passengers'][0]): string {
+  if (!passenger.extraInfos) return 'Unknown';
+  const genderInfo = passenger.extraInfos.find(
+    (info) => info.definition === EXTRA_INFO_IDS.GENDER
+  );
+  return genderInfo?.value || 'Unknown';
+}
+
+/**
+ * Resolve the accommodation code from a booking item.
+ * Uses product.lineClass (e.g., "Tourist", "Business", "Open Air").
+ */
+function resolveAccommodation(item: BookingDetail['items'][0]): string {
+  const className = item.product.lineClass || '';
+  const code = resolveAccommodationCode(className);
+  if (!code) {
+    throw new Error(
+      `Unknown accommodation class: "${className}"`
+    );
+  }
+  return code;
+}
+
+/**
+ * Maps a Bookaway booking detail to the OceanJet translated format.
+ * Automatically detects booking type: one-way, round-trip, connecting, or connecting-round-trip.
+ */
+export function mapBookingToOceanJet(booking: BookingDetail): TranslatedBooking {
+  const item = booking.items[0];
+  if (!item) {
+    throw new Error(`Booking ${booking.reference} has no items`);
+  }
+
+  // Extract origin/destination from item.trip (actual API path)
+  const originCity = item.trip.fromId.city.name;
+  const destinationCity = item.trip.toId.city.name;
+
+  const originCode = resolveStationCode(originCity);
+  const destinationCode = resolveStationCode(destinationCity);
+
+  if (!originCode) {
+    throw new Error(
+      `Unknown origin city: "${originCity}" (booking ${booking.reference})`
+    );
+  }
+  if (!destinationCode) {
+    throw new Error(
+      `Unknown destination city: "${destinationCity}" (booking ${booking.reference})`
+    );
+  }
+
+  // Extract passengers — age and gender are in extraInfos by definition ID
+  const passengers: PassengerData[] = item.passengers.map((p) => ({
+    firstName: p.firstName,
+    lastName: p.lastName,
+    age: extractAge(p),
+    gender: extractGender(p),
+  }));
+
+  // Extract accommodation from product.lineClass
+  const accommodation = resolveAccommodation(item);
+
+  // Check if round-trip (returnDepartureDate is empty string when not round-trip)
+  const isRoundTrip = !!(
+    booking.misc.returnDepartureDate && booking.misc.returnDepartureTime
+  );
+
+  // Check if connecting route
+  const connectingRoute = findConnectingRoute(originCode, destinationCode);
+
+  // Determine booking type
+  let bookingType: BookingType;
+  if (connectingRoute && isRoundTrip) {
+    bookingType = 'connecting-round-trip';
+  } else if (connectingRoute) {
+    bookingType = 'connecting-one-way';
+  } else if (isRoundTrip) {
+    bookingType = 'round-trip';
+  } else {
+    bookingType = 'one-way';
+  }
+
+  // Item ID for approval: use item.reference (e.g., "IT5913418")
+  // The API docs reference items[0]._id but real API returns .reference
+  const itemId = item.reference;
+
+  const result: TranslatedBooking = {
+    bookingId: booking._id,
+    reference: booking.reference,
+    itemId,
+    bookingType,
+    passengers,
+    departureLeg: {
+      origin: originCode,
+      destination: destinationCode,
+      date: booking.misc.departureDate,
+      time: to12Hour(booking.misc.departureTime),
+      accommodation,
+    },
+  };
+
+  // Add return leg for round-trip (non-connecting)
+  if (isRoundTrip && !connectingRoute) {
+    result.returnLeg = {
+      origin: destinationCode,
+      destination: originCode,
+      date: booking.misc.returnDepartureDate!,
+      time: to12Hour(booking.misc.returnDepartureTime!),
+      accommodation,
+    };
+  }
+
+  // Add connecting legs
+  if (connectingRoute) {
+    result.connectingLegs = [
+      {
+        origin: connectingRoute.leg1.origin,
+        destination: connectingRoute.leg1.destination,
+        date: booking.misc.departureDate,
+        time: to12Hour(connectingRoute.leg1.departureTime),
+        accommodation,
+      },
+      {
+        origin: connectingRoute.leg2.origin,
+        destination: connectingRoute.leg2.destination,
+        date: booking.misc.departureDate,
+        time: to12Hour(connectingRoute.leg2.departureTime),
+        accommodation,
+      },
+    ];
+
+    // For connecting round-trip, resolve the reverse connecting route
+    if (isRoundTrip) {
+      const reverseRoute = findConnectingRoute(destinationCode, originCode);
+      if (!reverseRoute) {
+        throw new Error(
+          `No reverse connecting route found for ${destinationCode}-${originCode} (booking ${booking.reference})`
+        );
+      }
+      result.connectingReturnLegs = [
+        {
+          origin: reverseRoute.leg1.origin,
+          destination: reverseRoute.leg1.destination,
+          date: booking.misc.returnDepartureDate!,
+          time: to12Hour(reverseRoute.leg1.departureTime),
+          accommodation,
+        },
+        {
+          origin: reverseRoute.leg2.origin,
+          destination: reverseRoute.leg2.destination,
+          date: booking.misc.returnDepartureDate!,
+          time: to12Hour(reverseRoute.leg2.departureTime),
+          accommodation,
+        },
+      ];
+    }
+  }
+
+  return result;
+}

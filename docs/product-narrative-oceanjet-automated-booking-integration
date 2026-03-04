@@ -1,0 +1,98 @@
+# Product / feature title: OceanJet Automated Booking Integration
+
+*Note: towards the end of this document there is a Q&A section you can refer to for queries that might come up while reading this document.*
+
+### About
+
+This feature introduces an automated booking pipeline between Bookaway's system and OceanJet's Prime Software. Currently, Bookaway agents must manually transfer passenger and route data from the Bookaway admin panel into OceanJet's standalone desktop application to issue tickets and approve bookings. This integration will automate ticket issuance, retrieve the ticket number, and significantly speed up the approval process on Bookaway, eliminating the manual bottleneck.
+
+### Business goals
+
+* **Reduce Operational Cost & Time:** Automate the manual processing of ~1,000 bookings per month (~12,000 annually). Since each Bookaway booking averages 2.3 tickets, and the OceanJet system only accepts one passenger per ticket issuance flow, agents are currently doing the manual flow over 27,000 times a year.
+* **Improve Conversion & Customer Satisfaction (Faster Confirmation):** Decrease the time-to-ticket for the end customer. Moving from a "Pending" queue that relies on human intervention to an automated "Approved" status much faster will improve trust and reduce customer support inquiries regarding unconfirmed tickets.
+
+### Why should we build it?
+
+* **Reduce the error rate and points of failure:** The current workflow is highly manual and requires agents to copy-paste passenger names, ages, and sexes. It also forces them to manually map stations (e.g., "Tagbilaran" to "TAG") and calculate 24-hour to 12-hour time formats, which introduces a high risk of agents booking the wrong departure time. We estimate the current error rate is roughly 5% and expect this automation to drive it down to 0%.
+* **Reduce time for booking:** The manual process is slow, requiring agents to recheck values to ensure nothing was missed. Furthermore, the UI requires clicking through multiple screens and temporarily copying ticket numbers elsewhere before they disappear. By automating this, we expect to reduce the processing time per booking from ~10 minutes down to ~2 minutes.
+
+### Customer behavior
+
+* **Bookaway's end customers:** Will get their bookings approved much faster (though not instantly, as it still requires processing time), reducing anxiety and giving them peace of mind about their travel plans.
+* **Operations team members:** Will no longer need to perform this repetitive, manual copy-paste process, freeing up their time to handle complex edge cases, customer support, and other tasks.
+* **The OceanJet operator:** Will see improved reliability and higher ratings from end-customers. Currently, Bookaway receives so many OceanJet bookings that agents sometimes cannot process them all manually in time, forcing Bookaway to cancel on the end-customer. This automation ensures OceanJet doesn't lose those fulfilled bookings or suffer unwarranted negative reviews due to our internal bottlenecks.
+
+### Success metrics
+
+* **Global OKR Impact:** Directly supports the company objective to **"Increase operational efficiency with AI & Automation"** by contributing significantly to the KR of **"8,000 hours/year freed in automated workflows."**
+* **Fulfillment Error Rate:** Decrease the error rate (wrong names, dates, or AM/PM mismatches) from 5% to 0%.
+* **Processing Time:** Reduce the average time to process and approve an OceanJet booking from ~10 minutes to ~2 minutes.
+* **Agent Touchpoints:** Percentage of OceanJet bookings requiring manual agent intervention drops significantly (target: < 5%).
+
+### Risks
+
+* **Supplier Relationship Clash:** There is a potential risk of friction between Travelier/Bookaway and OceanJet if the operator discovers and objects to our use of bots or RPA to automate bookings on their platform.
+* **Technical limitations of the Supplier:** If OceanJet does not offer a modern API, we may have to rely on Robotic Process Automation (RPA) to mimic the desktop clicks within Prime Software, which can be brittle if their UI updates.
+* **System Latency/Timeouts:** The Prime Software is explicitly noted by agents as being "a little bit slow". If their backend frequently times out, automated requests might fail, pushing bookings back into a manual fallback queue.
+
+## Product requirements (HL)
+
+*In this section we describe in high-level (this isn’t a spec!) the product itself and scope of the upcoming release.*
+
+### User stories
+
+* **As a Bookaway Customer:** I want to receive my confirmed OceanJet ticket quickly after booking, so I have peace of mind about my travel plans.
+* **As an Operations Agent:** I want the system to automatically map Bookaway routes, times, and passenger details to OceanJet's requirements, issue the ticket, and attach the booking code, so I don't have to manually type this into Prime Software.
+* **As the OceanJet Operator:** I want Bookaway to process all incoming requests efficiently so that we don't lose valid reservations to manual processing delays.
+
+### Functionality
+
+* **Data Mapping Engine:** A background service that maps Bookaway's station strings (e.g., "Tagbilaran") to OceanJet's codes ("TAG"), translates 24-hour time to 12-hour time, and splits multi-ticket Bookaway bookings into individual OceanJet requests automatically.
+* **Automated Ticket Issuance:** A backend flow that pushes passenger details (Name, Age, Sex, Route, Accommodation Type) to OceanJet.
+* **Status Update Loop:** Automatically retrieve the generated Ticket Number (e.g., "12839038"), inject it into the Bookaway admin's "Approve Booking" modal, and change the booking status from "Pending" to "Approved".
+
+### Scope and timelines
+
+* **Scope:** The next iteration will focus solely on automating **One-Way** tickets for standard passenger classes (Tourist/Business) on major OceanJet routes. Multi-leg or promotional discount tickets are excluded for now.
+* **Effort:** *[To be estimated by Engineering]*
+* **ETA:** *[Target Quarter/Month]*
+
+### Future ideas
+
+* **Automated Cancellations & Modifications:** Allowing users to cancel tickets directly on Bookaway and pushing that cancellation automatically to OceanJet.
+* **Real-time Inventory Syncing:** Reading remaining seat capacity directly from OceanJet (e.g., pulling the "178 seats left" data) to prevent overbooking on Bookaway.
+
+## Q&A
+
+*List the dilemmas and questions this product might entail. Think about the questions you might be asked.*
+
+* **Q: What happens if OceanJet's system rejects the automated booking (e.g., ferry becomes fully booked between the time of payment and automation run)?**
+* **A:** The automation will gracefully fail, leaving the Bookaway booking in the "Pending" status and flagging it with a high-priority alert for manual agent review.
+
+
+* **Q: OceanJet requires specific class codes like "TC" for Tourist Class. How do we ensure these map correctly from our frontend?**
+* **A:** We will build a static lookup table in our database that associates Bookaway's internal ticket tier IDs directly to OceanJet's class codes.
+
+
+* **Q: Since one Bookaway booking can have multiple tickets, but OceanJet only takes one at a time, how will the automation handle this?**
+* **A:** The automation will loop through the passengers in the Bookaway booking, creating an individual OceanJet request for each one, and then compile all the resulting ticket numbers before marking the parent Bookaway booking as Approved.
+
+
+* **Q: How long before departure can bookings be booked in the OceanJet PRIME system?**
+* **A:** OceanJet opens their schedule exactly 1 month in advance. If a booking enters the Bookaway system for a departure 2 months from now, it won't be available to book yet in OceanJet PRIME and must be queued until the window opens.
+
+
+* **Q: Are there any attachments needed when approving a booking on Bookaway?**
+* **A:** No, only ticket codes that we get from the booking confirmations on the OceanJet PRIME system need to be entered upon approval in Bookaway's backoffice. These codes must be attached at both the booking and the passenger level.
+
+
+* **Q: Is booking with a return (round-trip) the same process as regular bookings?**
+* **A:** TBD.
+
+
+* **Q: What is the maximum speed the bot should be working at so as not to cause issues (e.g., overloading the OceanJet system or appearing suspicious)?**
+* **A:** TBD, but we could see peak volumes of up to 600 tickets per day. If a bot takes 2 minutes per booking, that equals 20 hours of processing time for a single bot. We might need to run a few bots in parallel, which is an important consideration because each bot/user requires a separate license for the PRIME system!
+
+
+
+---
