@@ -1,6 +1,7 @@
 import type { BookawayClient } from '../bookaway/client.js';
 import type { BookingSummary, ApprovalRequest } from '../bookaway/types.js';
-import type { OperatorModule } from '../operators/types.js';
+import type { OperatorModule, TicketErrorCode } from '../operators/types.js';
+import { SYSTEM_ERROR_CODES, TICKET_ERROR_LABELS } from '../operators/types.js';
 import { mapBookingToOceanJet } from '../operators/oceanjet/mapper.js';
 import { logger } from '../utils/logger.js';
 import {
@@ -12,8 +13,8 @@ import {
 export type ProcessResult =
   | { status: 'approved' }
   | { status: 'skipped'; reason: string }
-  | { status: 'booking-error'; reason: string }
-  | { status: 'system-error'; reason: string };
+  | { status: 'booking-error'; reason: string; errorCode?: TicketErrorCode }
+  | { status: 'system-error'; reason: string; errorCode?: TicketErrorCode };
 
 /**
  * Check if departure date is within PRIME's 1-month booking window.
@@ -106,6 +107,12 @@ export async function processBooking(
 
     // 5. Handle result
     if (!ticketResult.success) {
+      const errorCode = ticketResult.errorCode || 'UNKNOWN_ERROR';
+      const errorLabel = TICKET_ERROR_LABELS[errorCode];
+      const errorDetail = ticketResult.error
+        ? `${errorLabel} — ${ticketResult.error}`
+        : errorLabel;
+
       // Check for partial failure
       if (ticketResult.partialResults?.some((r) => r.success)) {
         // Partial failure — keep claimed, alert
@@ -116,29 +123,50 @@ export async function processBooking(
         );
         logger.warn('Partial failure, booking remains claimed', {
           reference,
+          errorCode,
           durationMs: Date.now() - startTime,
         });
         return {
           status: 'booking-error',
-          reason: `Partial failure: ${ticketResult.error}`,
+          reason: `Partial failure: ${errorDetail}`,
+          errorCode,
         };
       }
 
-      // Full booking-level failure — release and alert
+      // System-level RPA error — release, alert, and stop the loop
+      if (SYSTEM_ERROR_CODES.has(errorCode)) {
+        await client.releaseBooking(bookingId);
+        await notifySystemFailure(errorDetail, reference);
+        logger.error('System-level RPA error, stopping', {
+          reference,
+          errorCode,
+          durationMs: Date.now() - startTime,
+        });
+        return {
+          status: 'system-error',
+          reason: errorDetail,
+          errorCode,
+        };
+      }
+
+      // Booking-level failure — release and alert, continue loop
       await client.releaseBooking(bookingId);
       await notifyBookingFailure(
         reference,
         bookingId,
-        ticketResult.error || 'Unknown error'
+        errorCode,
+        errorDetail
       );
       logger.warn('Booking failed, released', {
         reference,
+        errorCode,
         error: ticketResult.error,
         durationMs: Date.now() - startTime,
       });
       return {
         status: 'booking-error',
-        reason: ticketResult.error || 'Ticket issuance failed',
+        reason: errorDetail,
+        errorCode,
       };
     }
 
@@ -162,6 +190,7 @@ export async function processBooking(
           await notifyBookingFailure(
             reference,
             bookingId,
+            'UNKNOWN_ERROR',
             `Approval API failed after ${maxRetries} retries: ${error.message}`
           );
           logger.error('Approval failed after retries', {

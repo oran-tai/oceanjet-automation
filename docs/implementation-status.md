@@ -1,6 +1,6 @@
 # OceanJet Automation — Implementation Status
 
-**Last updated:** March 4, 2026
+**Last updated:** March 8, 2026
 
 ---
 
@@ -8,7 +8,7 @@
 
 ### Phase 1 TypeScript Orchestrator — Complete
 
-The full orchestrator is implemented, compiles cleanly, and has been verified against the live Bookaway API. 43 unit tests passing. 10/10 real bookings successfully mapped end-to-end.
+The full orchestrator is implemented, compiles cleanly, and has been verified against the live Bookaway API. 45 unit tests passing. 10/10 real bookings successfully mapped end-to-end.
 
 #### Core Components
 
@@ -17,7 +17,7 @@ The full orchestrator is implemented, compiles cleanly, and has been verified ag
 | **Configuration** | `src/config.ts`, `.env.example` | Done |
 | **Bookaway API Client** | `src/bookaway/client.ts`, `src/bookaway/types.ts` | Done — login, fetch bookings, fetch details, claim/release, approve. Auto token refresh on 401. |
 | **OceanJet Data Mapper** | `src/operators/oceanjet/mapper.ts`, `src/operators/oceanjet/config.ts` | Done — station codes (7 confirmed from live API + 12 from reference sheet), accommodation codes, connecting route detection (6 routes), passenger extraction from extraInfos. |
-| **Booking Processor** | `src/orchestrator/processor.ts` | Done — handles all 4 booking types, departure window validation, approval with 3x retry, error handling (booking-level vs system-level vs partial failure). |
+| **Booking Processor** | `src/orchestrator/processor.ts` | Done — handles all 4 booking types, departure window validation, approval with 3x retry, structured error code routing (13 error codes: 9 booking-level → release + continue, 4 system-level → release + stop). |
 | **Orchestrator Loop** | `src/orchestrator/loop.ts`, `src/index.ts` | Done — continuous polling, claim-before-process, in-memory duplicate detection, graceful shutdown on SIGINT/SIGTERM. |
 | **Slack Notifications** | `src/notifications/slack.ts` | Done — booking failure, system failure, partial failure, session expired alerts. |
 | **Mock Operator** | `src/operators/mock/operator.ts` | Done — returns sequential fake ticket numbers for end-to-end testing without PRIME. |
@@ -32,8 +32,8 @@ The full orchestrator is implemented, compiles cleanly, and has been verified ag
 | `tests/time.test.ts` | 9 | Time conversion: noon, midnight, AM, PM, edge cases |
 | `tests/config.test.ts` | 21 | Station codes (including real API city names), accommodation codes, connecting routes |
 | `tests/mapper.test.ts` | 9 | All booking types, multi-passenger, real API city names, error cases |
-| `tests/processor.test.ts` | 4 | Success flow, booking failure, system failure, departure window skip |
-| **Total** | **43** | All passing |
+| `tests/processor.test.ts` | 6 | Success flow, booking-level failure (TRIP_SOLD_OUT), system-level RPA error (PRIME_CRASH), UNKNOWN_ERROR fallback, thrown system error, departure window skip |
+| **Total** | **45** | All passing |
 
 #### Documentation
 
@@ -101,7 +101,8 @@ The orchestrator is ready to call the RPA agent via HTTP POST to `/issue-tickets
 - Run on a Windows VM with OceanJet PRIME installed
 - Accept translated booking data via HTTP
 - Drive PRIME to issue tickets (navigate, enter data, capture ticket numbers)
-- Return ticket numbers (or errors) back to the orchestrator
+- Return ticket numbers (or structured error codes) back to the orchestrator
+- Classify every failure using the `TicketErrorCode` enum (defined in `src/operators/types.ts`): `STATION_NOT_FOUND`, `TRIP_NOT_FOUND`, `TRIP_SOLD_OUT`, `VOYAGE_TIME_MISMATCH`, `ACCOMMODATION_UNAVAILABLE`, `PASSENGER_VALIDATION_ERROR`, `DUPLICATE_PASSENGER`, `DATE_BLACKOUT`, `PRIME_VALIDATION_ERROR`, `PRIME_TIMEOUT`, `PRIME_CRASH`, `SESSION_EXPIRED`, `RPA_INTERNAL_ERROR`, or `UNKNOWN_ERROR`
 
 Technology: Python with pywinauto or similar RPA library.
 

@@ -118,21 +118,58 @@ describe('processBooking', () => {
     expect(approval.approvalInputs.departureTrip.seatsNumber).toEqual(['T001']);
   });
 
-  it('releases and alerts on ticket failure', async () => {
+  it('releases and alerts on booking-level ticket failure', async () => {
     const client = makeMockClient();
     const operator = makeMockOperator({
       success: false,
       departureTickets: [],
       returnTickets: [],
-      error: 'Ferry full',
+      errorCode: 'TRIP_SOLD_OUT',
+      error: 'No seats available',
     });
     const summary = makeBookingSummary();
 
     const result = await processBooking(summary, operator, client);
 
     expect(result.status).toBe('booking-error');
+    expect(result).toHaveProperty('errorCode', 'TRIP_SOLD_OUT');
     expect(client.releaseBooking).toHaveBeenCalledWith('booking123');
     expect(client.approveBooking).not.toHaveBeenCalled();
+  });
+
+  it('stops the loop on system-level RPA error', async () => {
+    const client = makeMockClient();
+    const operator = makeMockOperator({
+      success: false,
+      departureTickets: [],
+      returnTickets: [],
+      errorCode: 'PRIME_CRASH',
+      error: 'PRIME process terminated',
+    });
+    const summary = makeBookingSummary();
+
+    const result = await processBooking(summary, operator, client);
+
+    expect(result.status).toBe('system-error');
+    expect(result).toHaveProperty('errorCode', 'PRIME_CRASH');
+    expect(client.releaseBooking).toHaveBeenCalledWith('booking123');
+  });
+
+  it('defaults to UNKNOWN_ERROR when no errorCode provided', async () => {
+    const client = makeMockClient();
+    const operator = makeMockOperator({
+      success: false,
+      departureTickets: [],
+      returnTickets: [],
+      error: 'Something went wrong',
+    });
+    const summary = makeBookingSummary();
+
+    const result = await processBooking(summary, operator, client);
+
+    expect(result.status).toBe('booking-error');
+    expect(result).toHaveProperty('errorCode', 'UNKNOWN_ERROR');
+    expect(client.releaseBooking).toHaveBeenCalled();
   });
 
   it('handles system-level errors', async () => {

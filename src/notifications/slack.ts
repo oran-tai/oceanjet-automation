@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import type { TicketErrorCode } from '../operators/types.js';
 
 async function sendSlackMessage(text: string): Promise<void> {
   if (!config.slack.webhookUrl) {
@@ -19,15 +20,17 @@ async function sendSlackMessage(text: string): Promise<void> {
 export async function notifyBookingFailure(
   reference: string,
   bookingId: string,
+  errorCode: TicketErrorCode,
   reason: string
 ): Promise<void> {
   const bookawayLink = `https://admin.bookaway.com/bookings/${bookingId}`;
   const message =
     `:warning: *Booking Failed — Manual Review Required*\n` +
     `*Reference:* ${reference}\n` +
-    `*Reason:* ${reason}\n` +
+    `*Error:* \`${errorCode}\`\n` +
+    `*Details:* ${reason}\n` +
     `*Link:* <${bookawayLink}|Open in Bookaway>`;
-  logger.warn('Booking failure alert', { reference, reason });
+  logger.warn('Booking failure alert', { reference, errorCode, reason });
   await sendSlackMessage(message);
 }
 

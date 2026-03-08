@@ -132,15 +132,44 @@ After all tickets are issued in PRIME, the system must approve the booking on Bo
 - Given the approval API call fails, then the system retries up to 3 times before flagging for manual review.
 
 #### 5.8 Error Handling & Manual Fallback
-The system must handle failures gracefully and never leave bookings in a broken state. All failure alerts are sent to a dedicated Slack channel (e.g., #oceanjet-automation-alerts).
+The system must handle failures gracefully and never leave bookings in a broken state. All failure alerts are sent to a dedicated Slack channel (e.g., #oceanjet-automation-alerts). The RPA agent must return a structured error code (see taxonomy below) so that Slack alerts are specific and actionable for agents.
+
+**Error Code Taxonomy:**
+
+The RPA agent classifies every failure into one of the following error codes. The orchestrator uses these to decide behavior (release vs. keep claimed, continue vs. stop) and to generate clear Slack messages.
+
+*Booking-level errors* — the booking is released on Bookaway, a Slack alert is sent, and the automation **continues** to the next booking:
+
+| Error Code | Description | What the agent should do |
+|---|---|---|
+| `STATION_NOT_FOUND` | Origin or destination station not found in PRIME's dropdown | Check if OceanJet changed station names; update station code mapping |
+| `TRIP_NOT_FOUND` | No voyage listed for this station pair on the given date | Verify the route is still active; check if schedule changed |
+| `TRIP_SOLD_OUT` | Voyage exists but no seats available | Book manually if alternative voyage/date available, or cancel/refund |
+| `VOYAGE_TIME_MISMATCH` | No voyage matches the expected departure time | Check if OceanJet updated the schedule; book the closest available time |
+| `ACCOMMODATION_UNAVAILABLE` | Requested class is sold out (other classes may have seats) | Try an alternative class if available, or cancel/refund |
+| `PASSENGER_VALIDATION_ERROR` | PRIME rejected passenger details (name, age, or gender) | Review passenger data on Bookaway; fix and re-enter manually |
+| `DUPLICATE_PASSENGER` | PRIME flagged passenger as already booked on this voyage | Check if a duplicate booking exists; resolve with customer |
+| `DATE_BLACKOUT` | Voyage date is blocked in PRIME (holiday or maintenance) | Contact OceanJet or rebook on an alternative date |
+| `PRIME_VALIDATION_ERROR` | Catch-all for unexpected PRIME validation dialogs | Screenshot the error in PRIME and investigate |
+| `UNKNOWN_ERROR` | Unclassified error | Investigate the booking manually |
+
+*System-level errors* — the booking is released, a Slack alert is sent, and the automation **stops entirely**:
+
+| Error Code | Description | What the agent should do |
+|---|---|---|
+| `PRIME_TIMEOUT` | PRIME became unresponsive | Verify PRIME is running on the VM; restart if needed |
+| `PRIME_CRASH` | PRIME application crashed | Restart PRIME, re-login, then restart the automation |
+| `SESSION_EXPIRED` | PRIME login session has expired | Re-login to PRIME, then restart the automation |
+| `RPA_INTERNAL_ERROR` | RPA agent hit an internal error | Check RPA agent logs on the Windows VM |
 
 **Acceptance Criteria:**
-- Given PRIME rejects a booking (e.g., ferry is fully booked, voyage not found, trip not available), then the system releases the booking on Bookaway (sets `inProgressBy` to `null`), sends an alert to the dedicated Slack channel with the booking reference, failure reason, and a link to the booking in Bookaway Admin for manual agent review, and **continues processing the next booking in the queue** — this is a booking-level failure, not a system-level failure, so the automation should not stop.
-- Given PRIME times out, crashes, or becomes unresponsive during ticket issuance, then the system logs the failure, releases the Bookaway booking, sends an alert to the dedicated Slack channel, and **stops the automation entirely** (since a PRIME crash or timeout likely means the session is no longer usable). An agent must verify PRIME is back online and re-login before restarting the automation.
+- Given the RPA agent returns a booking-level error code (`STATION_NOT_FOUND`, `TRIP_NOT_FOUND`, `TRIP_SOLD_OUT`, `VOYAGE_TIME_MISMATCH`, `ACCOMMODATION_UNAVAILABLE`, `PASSENGER_VALIDATION_ERROR`, `DUPLICATE_PASSENGER`, `DATE_BLACKOUT`, `PRIME_VALIDATION_ERROR`, or `UNKNOWN_ERROR`), then the system releases the booking on Bookaway, sends a Slack alert with the booking reference, error code, human-readable description, and a link to the booking in Bookaway Admin, and **continues processing the next booking in the queue**.
+- Given the RPA agent returns a system-level error code (`PRIME_TIMEOUT`, `PRIME_CRASH`, `SESSION_EXPIRED`, or `RPA_INTERNAL_ERROR`), then the system releases the booking, sends a Slack alert, and **stops the automation entirely**. An agent must resolve the issue and restart.
 - Given the automation detects a PRIME logout or session expiry at any point, then it stops immediately and sends an alert to the dedicated Slack channel requesting manual re-login.
 - Given a booking's departure date is more than 1 month in the future (outside PRIME's booking window), then the system skips it and re-queues it for processing when the booking window opens.
-- Given a multi-passenger booking where some passengers succeed but a subsequent passenger fails in PRIME (partial failure), then the system does **not** approve the booking and does **not** release it on Bookaway. Instead, the booking remains claimed (`inProgressBy` stays set), and the system sends an alert to the dedicated Slack channel with the booking reference, which passengers succeeded (with their ticket numbers), and which passenger failed (with the failure reason). An agent must manually resolve the partial state.
+- Given a multi-passenger booking where some passengers succeed but a subsequent passenger fails in PRIME (partial failure), then the system does **not** approve the booking and does **not** release it on Bookaway. Instead, the booking remains claimed (`inProgressBy` stays set), and the system sends an alert to the dedicated Slack channel with the booking reference, which passengers succeeded (with their ticket numbers), and which passenger failed (with the failure reason and error code). An agent must manually resolve the partial state.
 - The system must never approve a booking on Bookaway without having successfully issued all required tickets in PRIME.
+- All Slack alerts must include the error code (e.g., `TRIP_SOLD_OUT`) alongside the human-readable description so agents can quickly identify the failure type.
 
 ---
 

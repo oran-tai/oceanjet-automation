@@ -1,5 +1,55 @@
 export type BookingType = 'one-way' | 'round-trip' | 'connecting-one-way' | 'connecting-round-trip';
 
+/**
+ * Structured error codes returned by the RPA agent.
+ * Allows the orchestrator to give actionable Slack alerts
+ * and decide whether to release, stop, or escalate.
+ */
+export type TicketErrorCode =
+  // PRIME rejection errors (booking-level: release + alert + continue loop)
+  | 'STATION_NOT_FOUND'           // Origin or destination station not found in PRIME's dropdown
+  | 'TRIP_NOT_FOUND'              // No voyage listed for this station pair on the given date
+  | 'TRIP_SOLD_OUT'               // Voyage exists but no seats available
+  | 'VOYAGE_TIME_MISMATCH'        // No voyage matches the expected departure time
+  | 'ACCOMMODATION_UNAVAILABLE'   // Requested class sold out (other classes may have seats)
+  | 'PASSENGER_VALIDATION_ERROR'  // PRIME rejected passenger details (name, age, gender)
+  | 'DUPLICATE_PASSENGER'         // PRIME flagged passenger as already booked on this voyage
+  | 'DATE_BLACKOUT'               // Voyage date is blocked (holiday, maintenance)
+  | 'PRIME_VALIDATION_ERROR'      // Catch-all for unexpected PRIME validation dialogs
+  // System-level errors (stop loop + alert)
+  | 'PRIME_TIMEOUT'               // PRIME became unresponsive
+  | 'PRIME_CRASH'                 // PRIME application crashed
+  | 'SESSION_EXPIRED'             // PRIME login session expired
+  | 'RPA_INTERNAL_ERROR'          // RPA agent hit an internal error
+  // Catch-all
+  | 'UNKNOWN_ERROR';              // Unclassified error
+
+/** Human-readable descriptions for each error code, used in Slack alerts. */
+export const TICKET_ERROR_LABELS: Record<TicketErrorCode, string> = {
+  STATION_NOT_FOUND: 'Origin or destination station not found in PRIME',
+  TRIP_NOT_FOUND: 'No voyage found for this route and date in PRIME',
+  TRIP_SOLD_OUT: 'Trip is fully booked — no seats available',
+  VOYAGE_TIME_MISMATCH: 'No voyage matches the expected departure time',
+  ACCOMMODATION_UNAVAILABLE: 'Requested accommodation class is sold out',
+  PASSENGER_VALIDATION_ERROR: 'PRIME rejected passenger details (check name, age, or gender)',
+  DUPLICATE_PASSENGER: 'Passenger already booked on this voyage',
+  DATE_BLACKOUT: 'Voyage date is blocked in PRIME (holiday or maintenance)',
+  PRIME_VALIDATION_ERROR: 'PRIME showed an unexpected validation error',
+  PRIME_TIMEOUT: 'PRIME became unresponsive (timeout)',
+  PRIME_CRASH: 'PRIME application crashed',
+  SESSION_EXPIRED: 'PRIME login session has expired',
+  RPA_INTERNAL_ERROR: 'RPA agent encountered an internal error',
+  UNKNOWN_ERROR: 'An unclassified error occurred',
+};
+
+/** Error codes that indicate a system-level failure — the loop should stop. */
+export const SYSTEM_ERROR_CODES: ReadonlySet<TicketErrorCode> = new Set([
+  'PRIME_TIMEOUT',
+  'PRIME_CRASH',
+  'SESSION_EXPIRED',
+  'RPA_INTERNAL_ERROR',
+]);
+
 export interface PassengerData {
   firstName: string;
   lastName: string;
@@ -35,7 +85,9 @@ export interface TicketResult {
   departureTickets: string[];
   /** Ticket numbers for the return trip */
   returnTickets: string[];
-  /** If failed, reason */
+  /** Structured error code from the RPA agent */
+  errorCode?: TicketErrorCode;
+  /** Free-text error message for logging / additional context */
   error?: string;
   /** For partial failures: which passengers succeeded */
   partialResults?: {
@@ -43,6 +95,7 @@ export interface TicketResult {
     passengerName: string;
     tickets: string[];
     success: boolean;
+    errorCode?: TicketErrorCode;
     error?: string;
   }[];
 }

@@ -46,6 +46,7 @@ export class OceanJetRpaOperator implements OperatorModule {
           success: false,
           departureTickets: [],
           returnTickets: [],
+          errorCode: data?.errorCode || 'UNKNOWN_ERROR',
           error: data?.error || `RPA agent error: ${error.response.status}`,
           partialResults: data?.partialResults,
         };
