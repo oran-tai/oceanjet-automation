@@ -9,11 +9,11 @@
 
 ## 1. Problem Statement
 
-Bookaway operations agents currently process approximately 1,000 OceanJet bookings per month (~12,000 annually) through a fully manual workflow that spans two disconnected systems: the Bookaway Admin web portal and OceanJet's PRIME desktop application. Because PRIME only accepts one passenger per ticket issuance flow, and each booking averages 2.3 passengers, agents are performing the manual copy-paste-and-click routine over 27,000 times per year.
+Bookaway operations agents currently process approximately 3,666 OceanJet bookings per month (~44,000 annually) through a fully manual workflow that spans two disconnected systems: the Bookaway Admin web portal and OceanJet's PRIME desktop application. Because PRIME only accepts one passenger per ticket issuance flow, and each booking averages 2.3 passengers, agents are performing the manual copy-paste-and-click routine over 101,000 times per year.
 
 This process takes ~10 minutes per booking, requires mental data translation (station name to 3-letter code, 24-hour to 12-hour time conversion, class name to accommodation code), and forces agents to temporarily store ticket numbers in external files due to a PRIME UX limitation. The result is a ~5% error rate (wrong names, times, or AM/PM mismatches), frequent processing backlogs during peak periods that force Bookaway to cancel valid bookings, and significant agent burnout on repetitive work.
 
-The cost of inaction is measurable: lost bookings during peak volume, negative OceanJet reviews caused by Bookaway's internal bottleneck, and ~4,500 hours/year of agent time spent on a process that can be automated.
+The cost of inaction is measurable: lost bookings during peak volume, negative OceanJet reviews caused by Bookaway's internal bottleneck, and ~7,333 hours/year of agent time spent on a process that can be automated.
 
 ---
 
@@ -221,7 +221,7 @@ If PRIME undergoes a significant UI redesign that breaks RPA selectors, the modu
 
 | Metric | Target | Measurement Method |
 |---|---|---|
-| Agent hours freed per month | ~375 hours/month (~4,500/year) | Pre vs. post automation agent time tracking |
+| Agent hours freed per month | ~611 hours/month (~7,333/year) | Pre vs. post automation agent time tracking |
 | OceanJet booking cancellation rate (Bookaway-caused) | Decrease by >80% | Cancellations due to processing delays / total bookings |
 | Customer support inquiries about pending OceanJet bookings | Decrease by >50% | Support ticket count filtered by OceanJet + pending/status |
 | OceanJet partner satisfaction / rating | Improvement (qualitative) | Partner feedback |
@@ -414,7 +414,7 @@ The current process spans 5 phases across 2 systems (Bookaway Admin + PRIME Desk
 4. **Ticket Issuance & Temporary Storage** — Agent issues ticket in PRIME, frantically copies the ticket number before the dialog disappears, pastes it into a temporary Notepad/Excel file.
 5. **Bookaway Approval** — Agent returns to Bookaway, enters ticket numbers into the approval modal, and approves the booking.
 
-This cycle repeats for every passenger in every booking, ~27,000 times per year.
+This cycle repeats for every passenger in every booking, ~101,000 times per year.
 
 ---
 

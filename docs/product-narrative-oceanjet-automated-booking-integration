@@ -8,7 +8,7 @@ This feature introduces an automated booking pipeline between Bookaway's system 
 
 ### Business goals
 
-* **Reduce Operational Cost & Time:** Automate the manual processing of ~1,000 bookings per month (~12,000 annually). Since each Bookaway booking averages 2.3 tickets, and the OceanJet system only accepts one passenger per ticket issuance flow, agents are currently doing the manual flow over 27,000 times a year.
+* **Reduce Operational Cost & Time:** Automate the manual processing of ~3,666 bookings per month (~44,000 annually). Since each Bookaway booking averages 2.3 tickets, and the OceanJet system only accepts one passenger per ticket issuance flow, agents are currently doing the manual flow over 101,000 times a year.
 * **Improve Conversion & Customer Satisfaction (Faster Confirmation):** Decrease the time-to-ticket for the end customer. Moving from a "Pending" queue that relies on human intervention to an automated "Approved" status much faster will improve trust and reduce customer support inquiries regarding unconfirmed tickets.
 
 ### Why should we build it?
