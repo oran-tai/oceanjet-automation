@@ -1,6 +1,6 @@
 # OceanJet Automation — Implementation Status
 
-**Last updated:** March 8, 2026
+**Last updated:** March 18, 2026
 
 ---
 
@@ -86,13 +86,9 @@ Several fields in the original API documentation were incorrect. The corrected p
 
 ## Next Steps
 
-### 1. Validate the Approval API (High Priority)
+### 1. ~~Validate the Approval API~~ — Done (March 18, 2026)
 
-The `approvalInputs._id` field currently uses `items[0].reference` (e.g., `"IT5645919"`). This needs to be tested with one real approval call to confirm it's the correct identifier. Options:
-
-- Test on a booking that's already been manually approved (if the API allows re-approval)
-- Test on a real pending booking with real ticket numbers from PRIME
-- Ask a Bookaway team member to confirm the expected value
+Validated via E2E staging test. Key finding: `approvalInputs` does **not** include an `_id` field — including it causes a 500 "Cast to ObjectId" error. The correct payload only contains `bookingCode`, `departureTrip`, and `returnTrip`. Code and docs updated accordingly.
 
 ### 2. Build the Python RPA Agent (Blocked — needs Windows VM)
 

@@ -68,7 +68,6 @@ export interface LegData {
 export interface TranslatedBooking {
   bookingId: string;
   reference: string;
-  itemId: string;
   bookingType: BookingType;
   passengers: PassengerData[];
   departureLeg: LegData;

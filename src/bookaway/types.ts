@@ -98,7 +98,6 @@ export interface ApprovalRequest {
   dropOffs: (null)[];
   voucherAttachments: unknown[];
   approvalInputs: {
-    _id: string;
     bookingCode: string;
     departureTrip: {
       seatsNumber: string[];

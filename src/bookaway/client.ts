@@ -18,7 +18,7 @@ export class BookawayClient {
       baseURL: config.bookaway.apiUrl,
       headers: {
         'Content-Type': 'application/json',
-        Origin: 'https://admin.bookaway.com',
+        Origin: config.bookaway.origin,
       },
     });
 
@@ -62,7 +62,7 @@ export class BookawayClient {
       {
         headers: {
           'Content-Type': 'application/json',
-          Origin: 'https://admin.bookaway.com',
+          Origin: config.bookaway.origin,
         },
       }
     );

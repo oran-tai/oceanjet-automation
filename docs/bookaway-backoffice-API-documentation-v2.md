@@ -318,7 +318,6 @@ This endpoint finalizes the booking. It sends the supplier's confirmation detail
 | `dropOffs` | array | Yes | Always `[null]`. |
 | `voucherAttachments` | array | Yes | Always `[]`. |
 | `approvalInputs` | object | **Yes** | Container for confirmation data. |
-| `approvalInputs._id` | string | **Yes** | The **Item Reference** from `items[0].reference` (e.g., `"IT5645919"`). |
 | `approvalInputs.bookingCode` | string | **Yes** | All ticket numbers, space-separated (e.g., `"1111111 2222222"`). |
 | `approvalInputs.departureTrip` | object | **Yes** | Outbound trip ticket details. |
 | `approvalInputs.departureTrip.seatsNumber` | array | **Yes** | Array of ticket number strings, one per departure ticket. |
@@ -340,7 +339,6 @@ curl -X POST 'https://www.bookaway.com/_api/bookings/v2/bookings/696f9eda1762985
     "dropOffs": [null],
     "voucherAttachments": [],
     "approvalInputs": {
-        "_id": "IT5645919",
         "bookingCode": "1111111 2222222",
         "departureTrip": {
             "seatsNumber": [
@@ -370,7 +368,6 @@ curl -X POST 'https://www.bookaway.com/_api/bookings/v2/bookings/69a01c0a30f5e5a
     "dropOffs": [null],
     "voucherAttachments": [],
     "approvalInputs": {
-        "_id": "IT5604463",
         "bookingCode": "1111111 2222222",
         "departureTrip": {
             "seatsNumber": ["1111111"],
@@ -386,7 +383,7 @@ curl -X POST 'https://www.bookaway.com/_api/bookings/v2/bookings/69a01c0a30f5e5a
 
 #### Important Logic
 
-1. **Item Reference (`_id`):** The `approvalInputs._id` field requires the item reference from `items[0].reference` (e.g., `"IT5645919"`). Items do not have a top-level `_id`.
+1. **No `_id` field:** The `approvalInputs` object does **not** include an `_id` field. Confirmed via staging E2E test (March 2026) — including `_id` causes a 500 "Cast to ObjectId" error.
 2. **Booking Code:** All ticket numbers concatenated with spaces.
 3. **One-Way:** All ticket numbers go into `departureTrip.seatsNumber`. `returnTrip.seatsNumber` is `[]`.
 4. **Round Trip:** Departure ticket numbers go into `departureTrip.seatsNumber`, return ticket numbers into `returnTrip.seatsNumber`.
@@ -449,7 +446,8 @@ A successful claim or release will return a success status.
 | Topic | Original Doc | Actual API |
 | --- | --- | --- |
 | **Origin/Destination City** | `items[0].product.tripInfo.fromId.city.name` | `items[0].trip.fromId.city.name` |
-| **Item ID** | `items[0]._id` | Items have no `_id`; use `items[0].reference` (e.g., `"IT5645919"`) |
+| **Item ID** | `items[0]._id` | Items have no `_id`; `items[0].reference` exists but is **not** used in approval |
+| **Approval `_id`** | `approvalInputs._id` = item reference | `approvalInputs` has **no `_id` field** — including it causes a 500 error |
 | **Passenger Age** | `items[0].passengers[i].age` (direct field) | `items[0].passengers[i].extraInfos` with definition `58f47da902e97f000888b000` |
 | **Passenger Gender** | `extraInfos` with `definition: "Gender"` | `extraInfos` with definition ID `58f47db102e97f000888b001` |
 | **Nationality** | `items[0].passengers[i].residence.name.common` | `extraInfos` with definition ID `619a4c6c4dbac3332cdfab10` |

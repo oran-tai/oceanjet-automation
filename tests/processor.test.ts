@@ -116,6 +116,7 @@ describe('processBooking', () => {
     const approval = (client.approveBooking as any).mock.calls[0][1];
     expect(approval.approvalInputs.bookingCode).toBe('T001');
     expect(approval.approvalInputs.departureTrip.seatsNumber).toEqual(['T001']);
+    expect(approval.approvalInputs).not.toHaveProperty('_id');
   });
 
   it('releases and alerts on booking-level ticket failure', async () => {

@@ -43,7 +43,6 @@ function isDepartureWithinWindow(departureDateStr: string): boolean {
  * Build the Bookaway approval payload from ticket results.
  */
 function buildApprovalPayload(
-  itemId: string,
   departureTickets: string[],
   returnTickets: string[]
 ): ApprovalRequest {
@@ -54,7 +53,6 @@ function buildApprovalPayload(
     dropOffs: [null],
     voucherAttachments: [],
     approvalInputs: {
-      _id: itemId,
       bookingCode: allTickets.join(' '),
       departureTrip: {
         seatsNumber: departureTickets,
@@ -172,7 +170,6 @@ export async function processBooking(
 
     // 6. Approve on Bookaway
     const approval = buildApprovalPayload(
-      translated.itemId,
       ticketResult.departureTickets,
       ticketResult.returnTickets
     );

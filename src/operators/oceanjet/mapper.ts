@@ -114,14 +114,9 @@ export function mapBookingToOceanJet(booking: BookingDetail): TranslatedBooking 
     bookingType = 'one-way';
   }
 
-  // Item ID for approval: use item.reference (e.g., "IT5913418")
-  // The API docs reference items[0]._id but real API returns .reference
-  const itemId = item.reference;
-
   const result: TranslatedBooking = {
     bookingId: booking._id,
     reference: booking.reference,
-    itemId,
     bookingType,
     passengers,
     departureLeg: {

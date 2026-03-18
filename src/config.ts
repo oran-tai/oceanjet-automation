@@ -10,9 +10,27 @@ function required(key: string): string {
   return value;
 }
 
+function resolveBookawayUrls(): { apiUrl: string; origin: string } {
+  const env = (process.env.BOOKAWAY_ENV || 'stage').toLowerCase();
+  if (env === 'prod') {
+    return {
+      apiUrl: required('BOOKAWAY_API_URL_PROD'),
+      origin: 'https://admin.bookaway.com',
+    };
+  }
+  return {
+    apiUrl: required('BOOKAWAY_API_URL_STAGE'),
+    origin: 'https://admin-stage.bookaway.com',
+  };
+}
+
+const bookawayUrls = resolveBookawayUrls();
+
 export const config = {
   bookaway: {
-    apiUrl: required('BOOKAWAY_API_URL'),
+    env: (process.env.BOOKAWAY_ENV || 'stage').toLowerCase() as 'prod' | 'stage',
+    apiUrl: bookawayUrls.apiUrl,
+    origin: bookawayUrls.origin,
     username: required('BOOKAWAY_USERNAME'),
     password: required('BOOKAWAY_PASSWORD'),
     botIdentifier: required('BOOKAWAY_BOT_IDENTIFIER'),

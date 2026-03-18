@@ -78,7 +78,6 @@ describe('mapBookingToOceanJet', () => {
     expect(result.departureLeg.destination).toBe('TAG');
     expect(result.departureLeg.time).toBe('1:00 PM');
     expect(result.departureLeg.accommodation).toBe('TC');
-    expect(result.itemId).toBe('IT1234567');
     expect(result.passengers).toHaveLength(1);
     expect(result.passengers[0].firstName).toBe('John');
     expect(result.passengers[0].age).toBe('30');
