@@ -68,28 +68,6 @@ ROUND_TRIP_BOOKING = {
     "contactInfo": "test@example.com",
 }
 
-INVALID_STATION_BOOKING = {
-    "bookingId": "test-err-001",
-    "reference": "TEST-ERR-STATION",
-    "bookingType": "one-way",
-    "passengers": [
-        {
-            "firstName": "Bad",
-            "lastName": "Station",
-            "age": "25",
-            "gender": "Male",
-        }
-    ],
-    "departureLeg": {
-        "origin": "ABC",
-        "destination": "TAG",
-        "date": "Fri, Mar 27th 2026",
-        "time": "6:00 AM",
-        "accommodation": "TC",
-    },
-    "contactInfo": "test@example.com",
-}
-
 CONNECTING_BOOKING = {
     "bookingId": "test-003",
     "reference": "TEST-CN-003",
@@ -157,16 +135,10 @@ def main():
     parser.add_argument("--round-trip", action="store_true", help="Test round-trip booking")
     parser.add_argument("--connecting", action="store_true", help="Test connecting route booking")
     parser.add_argument("--debug", action="store_true", help="Dump PRIME control tree and exit")
-    parser.add_argument("--test-errors", action="store_true",
-                        help="Test error handling: invalid booking then valid booking")
     args = parser.parse_args()
 
     if args.debug:
         debug_controls()
-        return
-
-    if args.test_errors:
-        test_error_handling()
         return
 
     if args.round_trip:
@@ -190,52 +162,6 @@ def main():
         sys.exit(1)
 
 
-def test_error_handling():
-    """Simulate orchestrator behavior: invalid booking fails, valid booking succeeds."""
-    from agent.prime_driver import PrimeDriver
-    from agent.error_codes import PrimeError, SYSTEM_ERROR_CODES
-
-    bookings = [
-        ("INVALID STATION (should fail with STATION_NOT_FOUND)", INVALID_STATION_BOOKING),
-        ("VALID BOOKING (should succeed)", ONE_WAY_BOOKING),
-    ]
-
-    logger.info("=" * 60)
-    logger.info("ERROR HANDLING TEST: 2 bookings (1 invalid, 1 valid)")
-    logger.info("=" * 60)
-
-    driver = PrimeDriver()
-
-    for description, booking in bookings:
-        logger.info("")
-        logger.info(f"--- {description} ---")
-        logger.info(f"Booking: {booking['reference']}")
-
-        try:
-            driver.fill_booking(booking)
-            logger.info(f"RESULT: SUCCESS - form filled for {booking['reference']}")
-        except PrimeError as e:
-            logger.warning(f"RESULT: {e.error_code.value} - {e.message}")
-
-            if e.error_code in SYSTEM_ERROR_CODES:
-                logger.error("SYSTEM ERROR - orchestrator would STOP the loop here")
-                break
-            else:
-                logger.info("BOOKING ERROR - orchestrator would release, alert, and CONTINUE")
-                logger.info("Clicking Refresh to reset form before next booking...")
-                try:
-                    driver.click_refresh()
-                except Exception:
-                    pass
-                continue
-        except Exception as e:
-            logger.error(f"RESULT: UNEXPECTED ERROR - {e}")
-            break
-
-    logger.info("")
-    logger.info("=" * 60)
-    logger.info("ERROR HANDLING TEST COMPLETE")
-    logger.info("=" * 60)
 
 
 if __name__ == "__main__":
