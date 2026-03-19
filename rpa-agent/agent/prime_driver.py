@@ -42,11 +42,13 @@ class PrimeDriver:
         """Verify that PRIME is on the Issue New Ticket screen.
 
         Assumes the operator has already navigated to this screen.
+        Uses 'Trip Details' pane as the check since 'ISSUE NEW TICKET'
+        matches two nested panes and causes ambiguity.
         """
-        issue_pane = self.main_window.child_window(
-            title="ISSUE NEW TICKET", control_type="Pane"
+        trip_details = self.main_window.child_window(
+            title="Trip Details", control_type="Pane"
         )
-        if not issue_pane.exists(timeout=5):
+        if not trip_details.exists(timeout=5):
             raise PrimeError(
                 TicketErrorCode.RPA_INTERNAL_ERROR,
                 "PRIME is not on the Issue New Ticket screen. "
@@ -55,14 +57,15 @@ class PrimeDriver:
         logger.info("Verified: on Issue New Ticket screen")
 
     def _get_issue_pane(self):
-        """Get the innermost ISSUE NEW TICKET pane."""
-        return (
-            self.main_window.child_window(
-                title="ISSUE NEW TICKET", control_type="Pane"
-            )
-            .child_window(title="ISSUE NEW TICKET", control_type="Pane")
-            .child_window(title="", control_type="Pane")
-        )
+        """Get the container pane holding Trip Details, Personal Details, etc.
+
+        The tree is: pane 'ISSUE NEW TICKET' > pane 'ISSUE NEW TICKET' > pane ''
+        We skip the ambiguous ISSUE NEW TICKET panes and go straight to
+        the parent of 'Trip Details' which is the unnamed pane.
+        """
+        return self.main_window.child_window(
+            title="Trip Details", control_type="Pane"
+        ).parent()
 
     def _get_trip_details_pane(self):
         """Get the Trip Details pane."""
