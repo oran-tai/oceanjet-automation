@@ -8,6 +8,11 @@ Run on the VM with PRIME open on Issue New Ticket:
 """
 
 import logging
+import sys
+
+# Fix COM threading for pywinauto UIA under pytest
+sys.coinit_flags = 0  # COINIT_MULTITHREADED
+import comtypes  # noqa: E402
 
 logger = logging.getLogger("test-error")
 
