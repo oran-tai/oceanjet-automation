@@ -1,6 +1,6 @@
 import type { BookawayClient } from '../bookaway/client.js';
 import type { BookingSummary, ApprovalRequest } from '../bookaway/types.js';
-import type { OperatorModule, TicketErrorCode } from '../operators/types.js';
+import type { OperatorModule, TicketErrorCode, PassengerData } from '../operators/types.js';
 import { SYSTEM_ERROR_CODES, TICKET_ERROR_LABELS } from '../operators/types.js';
 import { mapBookingToOceanJet } from '../operators/oceanjet/mapper.js';
 import { logger } from '../utils/logger.js';
@@ -15,6 +15,35 @@ export type ProcessResult =
   | { status: 'skipped'; reason: string }
   | { status: 'booking-error'; reason: string; errorCode?: TicketErrorCode }
   | { status: 'system-error'; reason: string; errorCode?: TicketErrorCode };
+
+/**
+ * Validate that all passengers have the required fields for PRIME.
+ * Returns an array of error messages (empty = all valid).
+ */
+function validatePassengers(passengers: PassengerData[]): string[] {
+  const errors: string[] = [];
+  const validGenders = ['Male', 'Female', 'male', 'female', 'M', 'F'];
+
+  for (let i = 0; i < passengers.length; i++) {
+    const p = passengers[i];
+    const label = `Passenger ${i + 1} (${p.firstName || '?'} ${p.lastName || '?'})`;
+
+    if (!p.firstName || p.firstName.trim() === '') {
+      errors.push(`${label}: missing first name`);
+    }
+    if (!p.lastName || p.lastName.trim() === '') {
+      errors.push(`${label}: missing last name`);
+    }
+    if (!p.age || p.age === 'Unknown' || isNaN(Number(p.age))) {
+      errors.push(`${label}: missing or invalid age "${p.age}"`);
+    }
+    if (!p.gender || p.gender === 'Unknown' || !validGenders.includes(p.gender)) {
+      errors.push(`${label}: missing or invalid gender "${p.gender}"`);
+    }
+  }
+
+  return errors;
+}
 
 /**
  * Check if departure date is within N days from now.
@@ -121,10 +150,29 @@ export async function processBooking(
       passengerCount: translated.passengers.length,
     });
 
-    // 5. Issue tickets via operator
+    // 5. Validate passenger data before touching PRIME
+    const passengerErrors = validatePassengers(translated.passengers);
+    if (passengerErrors.length > 0) {
+      const errorCode: TicketErrorCode = 'PASSENGER_VALIDATION_ERROR';
+      const errorDetail = `${TICKET_ERROR_LABELS[errorCode]} — ${passengerErrors.join('; ')}`;
+      await client.releaseBooking(bookingId);
+      await notifyBookingFailure(reference, bookingId, errorCode, errorDetail);
+      logger.warn('Passenger validation failed, skipping', {
+        reference,
+        errors: passengerErrors,
+        durationMs: Date.now() - startTime,
+      });
+      return {
+        status: 'booking-error',
+        reason: errorDetail,
+        errorCode,
+      };
+    }
+
+    // 6. Issue tickets via operator
     const ticketResult = await operator.issueTickets(translated);
 
-    // 6. Handle result
+    // 7. Handle result
     if (!ticketResult.success) {
       const errorCode = ticketResult.errorCode || 'UNKNOWN_ERROR';
       const errorLabel = TICKET_ERROR_LABELS[errorCode];
@@ -203,7 +251,7 @@ export async function processBooking(
       };
     }
 
-    // 7. Approve on Bookaway
+    // 8. Approve on Bookaway
     const approval = buildApprovalPayload(
       ticketResult.departureTickets,
       ticketResult.returnTickets

@@ -42,8 +42,20 @@ function nearFutureDate(): string {
 function makeBookingDetail(overrides: Partial<{
   departureDate: string;
   status: string;
+  passengers: { firstName: string; lastName: string; _id: string; extraInfos: { definition: string; value: string }[] }[];
 }>): BookingDetail {
-  const { departureDate = nearFutureDate(), status = 'pending' } = overrides;
+  const { departureDate = nearFutureDate(), status = 'pending', passengers } = overrides;
+  const defaultPassengers = [
+    {
+      firstName: 'John',
+      lastName: 'Doe',
+      _id: 'p1',
+      extraInfos: [
+        { definition: '58f47da902e97f000888b000', value: '30' },
+        { definition: '58f47db102e97f000888b001', value: 'Male' },
+      ],
+    },
+  ];
   return {
     _id: 'booking123',
     reference: 'BW1234567',
@@ -67,17 +79,7 @@ function makeBookingDetail(overrides: Partial<{
           fromId: { city: { name: 'Cebu' }, address: '' },
           toId: { city: { name: 'Bohol' }, address: '' },
         },
-        passengers: [
-          {
-            firstName: 'John',
-            lastName: 'Doe',
-            _id: 'p1',
-            extraInfos: [
-              { definition: '58f47da902e97f000888b000', value: '30' },
-              { definition: '58f47db102e97f000888b001', value: 'Male' },
-            ],
-          },
-        ],
+        passengers: passengers || defaultPassengers,
       },
     ],
   };
@@ -216,5 +218,29 @@ describe('processBooking', () => {
 
     expect(result.status).toBe('skipped');
     expect(operator.issueTickets).not.toHaveBeenCalled();
+  });
+
+  it('rejects bookings with missing passenger data', async () => {
+    const client = makeMockClient(makeBookingDetail({
+      passengers: [
+        {
+          firstName: 'John',
+          lastName: 'Doe',
+          _id: 'p1',
+          extraInfos: [
+            // Missing age and gender
+          ],
+        },
+      ],
+    }));
+    const operator = makeMockOperator();
+    const summary = makeBookingSummary();
+
+    const result = await processBooking(summary, operator, client);
+
+    expect(result.status).toBe('booking-error');
+    expect((result as any).errorCode).toBe('PASSENGER_VALIDATION_ERROR');
+    expect(operator.issueTickets).not.toHaveBeenCalled();
+    expect(client.releaseBooking).toHaveBeenCalled();
   });
 });
