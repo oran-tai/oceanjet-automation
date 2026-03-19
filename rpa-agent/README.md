@@ -6,28 +6,29 @@ Python agent that drives OceanJet PRIME's desktop UI to issue ferry tickets. Rec
 
 ## VM Setup
 
-1. **Python 3.12+** must be installed (use `py` launcher)
-2. **PRIME** must be open and logged in
-3. Copy this entire `rpa-agent/` folder to the VM
+### Prerequisites
+- **Python 3.12+** installed with `py` launcher
+- **PRIME** open and logged in on the Issue New Ticket screen
 
-## Installation
+### One-Click Install
 
-```batch
-install.bat
+Open Command Prompt on the VM and run:
+
+```
+powershell -ExecutionPolicy Bypass -Command "iwr -Uri 'https://raw.githubusercontent.com/oran-tai/oceanjet-automation/main/rpa-agent/setup.ps1' -OutFile setup.ps1; .\setup.ps1"
 ```
 
-Or manually:
-```batch
-py -m pip install -r requirements.txt
-```
+This downloads the code to `C:\rpa-agent`, installs dependencies, prompts for API keys, and creates a desktop shortcut. Run the same command again to update to the latest version (preserves `.env`).
 
-## Configuration
+### Manual Installation
 
-Copy `.env.example` to `.env` and fill in:
+1. Copy this `rpa-agent/` folder to the VM
+2. Run `install.bat` (or `py -m pip install -r requirements.txt`)
+3. Copy `.env.example` to `.env` and fill in:
 
 ```
 RPA_AUTH_TOKEN=your-secret-token
-ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=your-gemini-key
 RPA_PORT=8080
 ```
 
