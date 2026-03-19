@@ -12,9 +12,7 @@ export type TicketErrorCode =
   | 'TRIP_SOLD_OUT'               // Voyage exists but no seats available
   | 'VOYAGE_TIME_MISMATCH'        // No voyage matches the expected departure time
   | 'ACCOMMODATION_UNAVAILABLE'   // Requested class sold out (other classes may have seats)
-  | 'PASSENGER_VALIDATION_ERROR'  // PRIME rejected passenger details (name, age, gender)
-  | 'DUPLICATE_PASSENGER'         // PRIME flagged passenger as already booked on this voyage
-  | 'DATE_BLACKOUT'               // Voyage date is blocked (holiday, maintenance)
+  | 'PASSENGER_VALIDATION_ERROR'  // Missing or invalid passenger details (name, age, gender)
   | 'PRIME_VALIDATION_ERROR'      // Catch-all for unexpected PRIME validation dialogs
   // System-level errors (stop loop + alert)
   | 'PRIME_TIMEOUT'               // PRIME became unresponsive
@@ -31,9 +29,7 @@ export const TICKET_ERROR_LABELS: Record<TicketErrorCode, string> = {
   TRIP_SOLD_OUT: 'Trip is fully booked — no seats available',
   VOYAGE_TIME_MISMATCH: 'No voyage matches the expected departure time',
   ACCOMMODATION_UNAVAILABLE: 'Requested accommodation class is sold out',
-  PASSENGER_VALIDATION_ERROR: 'PRIME rejected passenger details (check name, age, or gender)',
-  DUPLICATE_PASSENGER: 'Passenger already booked on this voyage',
-  DATE_BLACKOUT: 'Voyage date is blocked in PRIME (holiday or maintenance)',
+  PASSENGER_VALIDATION_ERROR: 'Missing or invalid passenger details (check name, age, or gender)',
   PRIME_VALIDATION_ERROR: 'PRIME showed an unexpected validation error',
   PRIME_TIMEOUT: 'PRIME became unresponsive (timeout)',
   PRIME_CRASH: 'PRIME application crashed',
