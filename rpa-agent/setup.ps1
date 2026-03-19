@@ -116,6 +116,10 @@ $shortcut.Save()
 Write-Host ""
 Write-Host "  Desktop shortcut created: 'Start RPA Agent'" -ForegroundColor Green
 
+# --- Create update-rpa command ---
+Copy-Item "$INSTALL_DIR\update-rpa.bat" -Destination "C:\Windows\update-rpa.bat" -Force
+Write-Host "  Command installed: type 'update-rpa' from anywhere to update" -ForegroundColor Green
+
 # --- Done ---
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
