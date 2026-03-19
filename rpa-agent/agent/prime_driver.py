@@ -1,6 +1,7 @@
 """pywinauto driver for OceanJet PRIME desktop application."""
 
 import logging
+import re
 import time
 
 import io
@@ -392,6 +393,181 @@ class PrimeDriver:
             send_keys(contact_info, with_spaces=True)
             time.sleep(0.2)
 
+    def click_issue(self):
+        """Click the Issue button to submit the form."""
+        logger.info("Clicking Issue button")
+        try:
+            issue_btn = self.main_window.child_window(
+                title_re=" *Issue", control_type="Button"
+            )
+            issue_btn.click_input()
+            time.sleep(1)
+        except Exception as e:
+            raise PrimeError(
+                TicketErrorCode.RPA_INTERNAL_ERROR,
+                f"Failed to click Issue button: {e}",
+            )
+
+    def handle_issue_result(self) -> list[str]:
+        """Handle dialogs after clicking Issue and return ticket number(s).
+
+        The Issue flow has two possible paths:
+        1. Confirmation dialog ("Confirm" / "Continue issuing ticket?") → Yes
+           → Success dialog ("Process Complete. Ticket number(s): [XXXXXXXX].")
+        2. Validation error dialog (same title as main window, error message) → OK
+           → raises PRIME_VALIDATION_ERROR
+
+        Returns:
+            List of ticket number strings extracted from the success dialog.
+        """
+        desktop = Desktop(backend="uia")
+
+        # Wait for a dialog to appear — either Confirm or an error
+        dialog = None
+        for _ in range(PRIME_TIMEOUT_SEC * 2):
+            # Check for confirmation dialog first
+            try:
+                confirm_dlg = desktop.window(title="Confirm")
+                if confirm_dlg.exists(timeout=0.1):
+                    dialog = confirm_dlg
+                    break
+            except Exception:
+                pass
+
+            # Check for error dialog (uses same title as PRIME main window)
+            try:
+                # Error dialogs are small windows with the app title
+                windows = desktop.windows(title_re="OCEAN FAST FERRIES.*")
+                for w in windows:
+                    # Skip the main PRIME window itself
+                    rect = w.rectangle()
+                    width = rect.right - rect.left
+                    if width < 700:  # Error dialogs are smaller than main window
+                        dialog = w
+                        break
+                if dialog:
+                    break
+            except Exception:
+                pass
+
+            time.sleep(0.5)
+
+        if dialog is None:
+            raise PrimeError(
+                TicketErrorCode.PRIME_TIMEOUT,
+                "No dialog appeared after clicking Issue",
+            )
+
+        # Handle based on dialog type
+        dialog_title = dialog.window_text()
+
+        if dialog_title == "Confirm":
+            return self._handle_confirm_dialog(dialog, desktop)
+        else:
+            return self._handle_error_dialog(dialog)
+
+    def _handle_confirm_dialog(self, confirm_dlg, desktop) -> list[str]:
+        """Click Yes on the confirmation dialog and handle the result."""
+        logger.info("Confirmation dialog: 'Continue issuing ticket?' → clicking Yes")
+        try:
+            yes_btn = confirm_dlg.child_window(title="Yes", control_type="Button")
+            yes_btn.click_input()
+        except Exception:
+            # Fallback: press Enter (Yes is typically focused)
+            send_keys("{ENTER}")
+        time.sleep(2)
+
+        # Now wait for the result dialog — success or error
+        result_dlg = None
+        for _ in range(PRIME_TIMEOUT_SEC * 2):
+            try:
+                windows = desktop.windows(title_re="OCEAN FAST FERRIES.*")
+                for w in windows:
+                    rect = w.rectangle()
+                    width = rect.right - rect.left
+                    if width < 700:
+                        result_dlg = w
+                        break
+                if result_dlg:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+        if result_dlg is None:
+            raise PrimeError(
+                TicketErrorCode.PRIME_TIMEOUT,
+                "No result dialog appeared after confirming Issue",
+            )
+
+        # Read the dialog text
+        try:
+            # Get all static text controls (labels) in the dialog
+            texts = result_dlg.children(control_type="Text")
+            dialog_text = " ".join(t.window_text() for t in texts if t.window_text())
+            if not dialog_text:
+                dialog_text = result_dlg.window_text()
+        except Exception:
+            dialog_text = result_dlg.window_text()
+
+        logger.info(f"Result dialog text: {dialog_text}")
+
+        if "Process Complete" in dialog_text or "Ticket number" in dialog_text:
+            # Success — extract ticket numbers from brackets [XXXXXXXX]
+            ticket_numbers = re.findall(r"\[(\d+)\]", dialog_text)
+            logger.info(f"Ticket number(s) captured: {ticket_numbers}")
+
+            # Click OK to close
+            try:
+                ok_btn = result_dlg.child_window(title="OK", control_type="Button")
+                ok_btn.click_input()
+            except Exception:
+                send_keys("{ENTER}")
+            time.sleep(0.5)
+
+            if not ticket_numbers:
+                raise PrimeError(
+                    TicketErrorCode.RPA_INTERNAL_ERROR,
+                    f"Success dialog appeared but no ticket number found in: {dialog_text}",
+                )
+
+            return ticket_numbers
+        else:
+            return self._handle_error_dialog(result_dlg)
+
+    def _handle_error_dialog(self, error_dlg) -> list[str]:
+        """Handle a PRIME validation error dialog. Always raises PrimeError."""
+        try:
+            texts = error_dlg.children(control_type="Text")
+            error_text = " ".join(t.window_text() for t in texts if t.window_text())
+            if not error_text:
+                error_text = error_dlg.window_text()
+        except Exception:
+            error_text = "Unknown PRIME error"
+
+        logger.error(f"PRIME validation error: {error_text}")
+
+        # Click OK to close the error dialog
+        try:
+            ok_btn = error_dlg.child_window(title="OK", control_type="Button")
+            ok_btn.click_input()
+        except Exception:
+            send_keys("{ENTER}")
+        time.sleep(0.5)
+
+        # Detect specific error types from the message text
+        error_lower = error_text.lower()
+        if "sold out" in error_lower or "no available" in error_lower or "no seat" in error_lower:
+            raise PrimeError(
+                TicketErrorCode.TRIP_SOLD_OUT,
+                error_text,
+            )
+
+        raise PrimeError(
+            TicketErrorCode.PRIME_VALIDATION_ERROR,
+            error_text,
+        )
+
     def _build_ticket_tasks(self, booking: dict):
         """Build the list of (passenger_index, passenger, leg, trip_type, return_leg, label)
         tuples that represent each individual ticket to issue.
@@ -494,11 +670,12 @@ class PrimeDriver:
                 self.fill_trip_details(leg, trip_type, return_leg=return_leg)
                 self.fill_personal_details(pax, contact_info)
 
-                # Phase 1: no Issue click — ticket number is empty
-                ticket_no = ""  # Phase 2: will be populated after clicking Issue
-                logger.info(f"[Phase 1] Form filled for {label} - NOT clicking Issue")
+                # Click Issue, handle confirmation, capture ticket number(s)
+                self.click_issue()
+                ticket_numbers = self.handle_issue_result()
+                logger.info(f"Issued {len(ticket_numbers)} ticket(s) for {label}: {ticket_numbers}")
 
-                if ticket_no:
+                for ticket_no in ticket_numbers:
                     pax_results[pax_idx]["tickets"].append(ticket_no)
                     if leg_type == "departure":
                         departure_tickets.append(ticket_no)

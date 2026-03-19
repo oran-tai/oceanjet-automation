@@ -1,7 +1,8 @@
 """Standalone test script: fill PRIME form with hardcoded booking data.
 
 Run on the VM with PRIME open:
-    py test_fill_form.py              # one-way
+    py test_fill_form.py              # one-way (fill only)
+    py test_fill_form.py --issue      # one-way (fill + issue ticket)
     py test_fill_form.py --round-trip
     py test_fill_form.py --connecting
 """
@@ -134,6 +135,7 @@ def main():
     parser = argparse.ArgumentParser(description="Test PRIME form fill")
     parser.add_argument("--round-trip", action="store_true", help="Test round-trip booking")
     parser.add_argument("--connecting", action="store_true", help="Test connecting route booking")
+    parser.add_argument("--issue", action="store_true", help="Actually click Issue and capture ticket number (default: fill only)")
     parser.add_argument("--debug", action="store_true", help="Dump PRIME control tree and exit")
     args = parser.parse_args()
 
@@ -151,20 +153,50 @@ def main():
     logger.info(f"Testing {booking['bookingType']} booking: {booking['reference']}")
     logger.info("Make sure PRIME is open and logged in!")
 
+    if args.issue:
+        logger.info("MODE: Fill form + Issue ticket (REAL ticket will be issued!)")
+    else:
+        logger.info("MODE: Fill form only (no Issue click)")
+
     from agent.prime_driver import PrimeDriver
 
     try:
         driver = PrimeDriver()
-        result = driver.fill_booking(booking)
-        if result["success"]:
-            logger.info("SUCCESS: Form fill complete. Check PRIME via AnyDesk to verify fields.")
+
+        if args.issue:
+            result = driver.fill_booking(booking)
+            if result["success"]:
+                all_tickets = result.get("departureTickets", []) + result.get("returnTickets", [])
+                logger.info(f"SUCCESS: Ticket(s) issued: {all_tickets}")
+            else:
+                logger.error(f"FAILED: {result.get('errorCode')} - {result.get('error')}")
+                if result.get("partialResults"):
+                    for pr in result["partialResults"]:
+                        status = "OK" if pr["success"] else f"FAILED ({pr.get('errorCode')})"
+                        logger.info(f"  {pr['passengerName']}: {status} tickets={pr.get('tickets', [])}")
+                sys.exit(1)
         else:
-            logger.error(f"FAILED: {result.get('errorCode')} - {result.get('error')}")
-            if result.get("partialResults"):
-                for pr in result["partialResults"]:
-                    status = "OK" if pr["success"] else f"FAILED ({pr.get('errorCode')})"
-                    logger.info(f"  {pr['passengerName']}: {status}")
-            sys.exit(1)
+            # Fill-only mode: fill form for first passenger, no Issue
+            driver.verify_issue_new_ticket_screen()
+            leg = booking["departureLeg"]
+            pax = booking["passengers"][0]
+
+            if booking["bookingType"] in ("connecting-one-way", "connecting-round-trip"):
+                # Fill first connecting leg only
+                leg = booking["connectingLegs"][0]
+                trip_type = "One Way"
+            elif booking["bookingType"] == "round-trip":
+                trip_type = "Round Trip"
+            else:
+                trip_type = "One Way"
+
+            driver.click_refresh()
+            driver.fill_trip_details(
+                leg, trip_type,
+                return_leg=booking.get("returnLeg") if trip_type == "Round Trip" else None,
+            )
+            driver.fill_personal_details(pax, booking.get("contactInfo", ""))
+            logger.info("SUCCESS: Form fill complete. Check PRIME via AnyDesk to verify fields.")
     except Exception as e:
         logger.error(f"FAILED: {e}")
         sys.exit(1)
