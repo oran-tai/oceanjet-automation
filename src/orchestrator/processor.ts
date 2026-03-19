@@ -17,6 +17,18 @@ export type ProcessResult =
   | { status: 'system-error'; reason: string; errorCode?: TicketErrorCode };
 
 /**
+ * Check if departure date is within N days from now.
+ */
+function isDepartureWithinDays(departureDateStr: string, days: number): boolean {
+  const cleaned = departureDateStr.replace(/(\d+)(st|nd|rd|th)/g, '$1');
+  const departureDate = new Date(cleaned);
+  if (isNaN(departureDate.getTime())) return true; // Can't parse → alert to be safe
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() + days);
+  return departureDate <= cutoff;
+}
+
+/**
  * Check if departure date is within PRIME's 1-month booking window.
  */
 function isDepartureWithinWindow(departureDateStr: string): boolean {
@@ -158,12 +170,26 @@ export async function processBooking(
 
       // Booking-level failure — release and alert, continue loop
       await client.releaseBooking(bookingId);
-      await notifyBookingFailure(
-        reference,
-        bookingId,
-        errorCode,
-        errorDetail
-      );
+
+      // TRIP_NOT_FOUND only alerts if departure is within 7 days —
+      // further out, the operator may not have opened schedules yet
+      const shouldAlert =
+        errorCode !== 'TRIP_NOT_FOUND' ||
+        isDepartureWithinDays(booking.misc.departureDate, 7);
+
+      if (shouldAlert) {
+        await notifyBookingFailure(
+          reference,
+          bookingId,
+          errorCode,
+          errorDetail
+        );
+      } else {
+        logger.info('TRIP_NOT_FOUND with departure > 7 days out, skipping Slack alert', {
+          reference,
+          departureDate: booking.misc.departureDate,
+        });
+      }
       logger.warn('Booking failed, released', {
         reference,
         errorCode,
