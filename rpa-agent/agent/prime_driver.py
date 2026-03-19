@@ -186,16 +186,10 @@ class PrimeDriver:
         """
         logger.info(f"Selecting voyage for departure time: {target_time}")
 
-        # Find the Voyage Schedule dialog via UIA (avoids 32/64-bit mismatch)
+        # Find the Voyage Schedule dialog — it's a separate top-level window
         try:
-            voyage_dlg = self.main_window.child_window(
-                title="Voyage Schedule", control_type="Window"
-            )
-            if not voyage_dlg.exists(timeout=PRIME_TIMEOUT_SEC):
-                # Also try as a Pane (Delphi dialogs may appear as either)
-                voyage_dlg = self.main_window.child_window(
-                    title="Voyage Schedule", control_type="Pane"
-                )
+            desktop = Desktop(backend="uia")
+            voyage_dlg = desktop.window(title="Voyage Schedule")
             voyage_dlg.wait("visible", timeout=PRIME_TIMEOUT_SEC)
         except Exception as e:
             raise PrimeError(
