@@ -56,26 +56,15 @@ class PrimeDriver:
             )
         logger.info("Verified: on Issue New Ticket screen")
 
-    def _get_issue_pane(self):
-        """Get the container pane holding Trip Details, Personal Details, etc.
-
-        The tree is: pane 'ISSUE NEW TICKET' > pane 'ISSUE NEW TICKET' > pane ''
-        We skip the ambiguous ISSUE NEW TICKET panes and go straight to
-        the parent of 'Trip Details' which is the unnamed pane.
-        """
-        return self.main_window.child_window(
-            title_re=" *Trip Details *", control_type="Pane"
-        ).parent()
-
     def _get_trip_details_pane(self):
         """Get the Trip Details pane."""
-        return self._get_issue_pane().child_window(
+        return self.main_window.child_window(
             title_re=" *Trip Details *", control_type="Pane"
         )
 
     def _get_personal_details_pane(self):
         """Get the Personal Details pane."""
-        return self._get_issue_pane().child_window(
+        return self.main_window.child_window(
             title_re=" *Personal Details *", control_type="Pane"
         )
 
