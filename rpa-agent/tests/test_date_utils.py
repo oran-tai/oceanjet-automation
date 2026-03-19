@@ -6,37 +6,37 @@ from agent.date_utils import bookaway_date_to_prime, match_departure_time
 
 class TestBookawayDateToPrime:
     def test_basic_date(self):
-        assert bookaway_date_to_prime("Fri, Apr 18th 2025") == "4/18/25"
+        assert bookaway_date_to_prime("Fri, Apr 18th 2025") == "041825"
 
     def test_first_day(self):
-        assert bookaway_date_to_prime("Wed, Jan 1st 2025") == "1/1/25"
+        assert bookaway_date_to_prime("Wed, Jan 1st 2025") == "010125"
 
     def test_second_day(self):
-        assert bookaway_date_to_prime("Thu, Jan 2nd 2025") == "1/2/25"
+        assert bookaway_date_to_prime("Thu, Jan 2nd 2025") == "010225"
 
     def test_third_day(self):
-        assert bookaway_date_to_prime("Fri, Jan 3rd 2025") == "1/3/25"
+        assert bookaway_date_to_prime("Fri, Jan 3rd 2025") == "010325"
 
     def test_double_digit_day(self):
-        assert bookaway_date_to_prime("Mon, Dec 22nd 2025") == "12/22/25"
+        assert bookaway_date_to_prime("Mon, Dec 22nd 2025") == "122225"
 
     def test_single_digit_month(self):
-        assert bookaway_date_to_prime("Tue, Mar 5th 2026") == "3/5/26"
+        assert bookaway_date_to_prime("Tue, Mar 5th 2026") == "030526"
 
     def test_leap_year(self):
-        assert bookaway_date_to_prime("Sat, Feb 29th 2028") == "2/29/28"
+        assert bookaway_date_to_prime("Sat, Feb 29th 2028") == "022928"
 
     def test_eleventh(self):
-        assert bookaway_date_to_prime("Tue, Nov 11th 2025") == "11/11/25"
+        assert bookaway_date_to_prime("Tue, Nov 11th 2025") == "111125"
 
     def test_twelfth(self):
-        assert bookaway_date_to_prime("Wed, Nov 12th 2025") == "11/12/25"
+        assert bookaway_date_to_prime("Wed, Nov 12th 2025") == "111225"
 
     def test_thirteenth(self):
-        assert bookaway_date_to_prime("Thu, Nov 13th 2025") == "11/13/25"
+        assert bookaway_date_to_prime("Thu, Nov 13th 2025") == "111325"
 
     def test_twenty_first(self):
-        assert bookaway_date_to_prime("Fri, Mar 21st 2025") == "3/21/25"
+        assert bookaway_date_to_prime("Fri, Mar 21st 2025") == "032125"
 
 
 class TestMatchDepartureTime:

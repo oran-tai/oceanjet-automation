@@ -116,8 +116,8 @@ class PrimeDriver:
         edits = trip_details.children(control_type="Edit")
         departure_date_edit = edits[1]
         departure_date_edit.click_input()
-        # Select all existing text and type over it
-        send_keys("^a")
+        # Delphi masked edit: Home to start, type digits (mask inserts slashes)
+        send_keys("{HOME}")
         send_keys(prime_date, with_spaces=True)
         time.sleep(0.3)
 
@@ -158,7 +158,7 @@ class PrimeDriver:
             return_date = bookaway_date_to_prime(return_leg["date"])
             return_date_edit = edits[0]
             return_date_edit.click_input()
-            send_keys("^a")
+            send_keys("{HOME}")
             send_keys(return_date, with_spaces=True)
             time.sleep(0.3)
 
@@ -189,7 +189,8 @@ class PrimeDriver:
         # Connect to the Voyage Schedule dialog via win32 backend
         try:
             voyage_app = Application(backend="win32").connect(
-                title="Voyage Schedule", timeout=PRIME_TIMEOUT_SEC
+                title="Voyage Schedule", timeout=PRIME_TIMEOUT_SEC,
+                found_index=0,
             )
             voyage_dlg = voyage_app.window(title="Voyage Schedule")
         except Exception as e:

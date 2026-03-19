@@ -5,15 +5,14 @@ from datetime import datetime
 
 
 def bookaway_date_to_prime(date_str: str) -> str:
-    """Convert Bookaway date to PRIME date format.
+    """Convert Bookaway date to PRIME masked edit digit string.
 
     Input:  "Fri, Apr 18th 2025"
-    Output: "4/18/25"
+    Output: "041825"
 
-    Steps:
-    1. Strip weekday prefix (e.g., "Fri, ")
-    2. Strip ordinal suffix (st/nd/rd/th)
-    3. Parse and format as M/D/YY
+    PRIME's date field is a Delphi masked edit (_M/DD/YY).
+    The mask auto-inserts slashes — we only type the digits.
+    Format: MMDDYY (zero-padded month and day, 2-digit year).
     """
     # Remove weekday prefix: "Fri, Apr 18th 2025" -> "Apr 18th 2025"
     cleaned = re.sub(r"^[A-Za-z]+,\s*", "", date_str.strip())
@@ -21,8 +20,8 @@ def bookaway_date_to_prime(date_str: str) -> str:
     cleaned = re.sub(r"(\d+)(st|nd|rd|th)\b", r"\1", cleaned)
     # Parse the date
     dt = datetime.strptime(cleaned.strip(), "%b %d %Y")
-    # Format as M/D/YY (no leading zeros)
-    return f"{dt.month}/{dt.day}/{dt.strftime('%y')}"
+    # Format as MMDDYY digits only (mask inserts the slashes)
+    return dt.strftime("%m%d%y")
 
 
 def match_departure_time(target_time: str, grid_times: list[str]) -> int | None:

@@ -32,7 +32,7 @@ ONE_WAY_BOOKING = {
     "departureLeg": {
         "origin": "CEB",
         "destination": "TAG",
-        "date": "Fri, Apr 18th 2025",
+        "date": "Fri, Mar 27th 2026",
         "time": "6:00 AM",
         "accommodation": "TC",
     },
@@ -54,14 +54,14 @@ ROUND_TRIP_BOOKING = {
     "departureLeg": {
         "origin": "CEB",
         "destination": "TAG",
-        "date": "Fri, Apr 18th 2025",
+        "date": "Fri, Mar 27th 2026",
         "time": "6:00 AM",
         "accommodation": "TC",
     },
     "returnLeg": {
         "origin": "TAG",
         "destination": "CEB",
-        "date": "Sun, Apr 20th 2025",
+        "date": "Sun, Mar 29th 2026",
         "time": "10:40 AM",
         "accommodation": "TC",
     },
@@ -83,7 +83,7 @@ CONNECTING_BOOKING = {
     "departureLeg": {
         "origin": "CEB",
         "destination": "SIQ",
-        "date": "Fri, Apr 18th 2025",
+        "date": "Fri, Mar 27th 2026",
         "time": "1:00 PM",
         "accommodation": "TC",
     },
@@ -91,14 +91,14 @@ CONNECTING_BOOKING = {
         {
             "origin": "CEB",
             "destination": "TAG",
-            "date": "Fri, Apr 18th 2025",
+            "date": "Fri, Mar 27th 2026",
             "time": "1:00 PM",
             "accommodation": "TC",
         },
         {
             "origin": "TAG",
             "destination": "SIQ",
-            "date": "Fri, Apr 18th 2025",
+            "date": "Fri, Mar 27th 2026",
             "time": "3:20 PM",
             "accommodation": "TC",
         },
