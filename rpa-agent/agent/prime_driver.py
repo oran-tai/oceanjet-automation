@@ -46,7 +46,7 @@ class PrimeDriver:
         matches two nested panes and causes ambiguity.
         """
         trip_details = self.main_window.child_window(
-            title="Trip Details", control_type="Pane"
+            title_re=" *Trip Details *", control_type="Pane"
         )
         if not trip_details.exists(timeout=5):
             raise PrimeError(
@@ -64,25 +64,25 @@ class PrimeDriver:
         the parent of 'Trip Details' which is the unnamed pane.
         """
         return self.main_window.child_window(
-            title="Trip Details", control_type="Pane"
+            title_re=" *Trip Details *", control_type="Pane"
         ).parent()
 
     def _get_trip_details_pane(self):
         """Get the Trip Details pane."""
         return self._get_issue_pane().child_window(
-            title="Trip Details", control_type="Pane"
+            title_re=" *Trip Details *", control_type="Pane"
         )
 
     def _get_personal_details_pane(self):
         """Get the Personal Details pane."""
         return self._get_issue_pane().child_window(
-            title="Personal Details", control_type="Pane"
+            title_re=" *Personal Details *", control_type="Pane"
         )
 
     def _get_trip_type_pane(self):
         """Get the Trip Type pane within Trip Details."""
         return self._get_trip_details_pane().child_window(
-            title="Trip Type", control_type="Pane"
+            title_re=" *Trip Type *", control_type="Pane"
         )
 
     def click_refresh(self):
