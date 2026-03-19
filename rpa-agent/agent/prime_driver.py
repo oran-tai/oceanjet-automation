@@ -186,35 +186,35 @@ class PrimeDriver:
         """
         logger.info(f"Selecting voyage for departure time: {target_time}")
 
-        # Connect to the Voyage Schedule dialog via win32 backend
+        # Find the Voyage Schedule dialog via UIA (avoids 32/64-bit mismatch)
         try:
-            voyage_app = Application(backend="win32").connect(
-                title="Voyage Schedule", timeout=PRIME_TIMEOUT_SEC,
-                found_index=0,
+            voyage_dlg = self.main_window.child_window(
+                title="Voyage Schedule", control_type="Window"
             )
-            voyage_dlg = voyage_app.window(title="Voyage Schedule")
+            if not voyage_dlg.exists(timeout=PRIME_TIMEOUT_SEC):
+                # Also try as a Pane (Delphi dialogs may appear as either)
+                voyage_dlg = self.main_window.child_window(
+                    title="Voyage Schedule", control_type="Pane"
+                )
+            voyage_dlg.wait("visible", timeout=PRIME_TIMEOUT_SEC)
         except Exception as e:
             raise PrimeError(
                 TicketErrorCode.PRIME_TIMEOUT,
                 f"Voyage Schedule dialog did not appear: {e}",
             )
 
-        # Find the TDBGrid within TScrollBox
+        # Capture screenshot of the dialog using PIL ImageGrab
+        # (more reliable than capture_as_image with 32-bit Delphi apps)
         try:
-            grid = voyage_dlg.child_window(class_name="TDBGrid")
+            from PIL import ImageGrab
+            rect = voyage_dlg.rectangle()
+            grid_image = ImageGrab.grab(bbox=(
+                rect.left, rect.top, rect.right, rect.bottom
+            ))
         except Exception as e:
             raise PrimeError(
                 TicketErrorCode.RPA_INTERNAL_ERROR,
-                f"Could not find voyage grid: {e}",
-            )
-
-        # Capture screenshot of the grid
-        try:
-            grid_image = grid.capture_as_image()
-        except Exception as e:
-            raise PrimeError(
-                TicketErrorCode.RPA_INTERNAL_ERROR,
-                f"Failed to capture grid screenshot: {e}",
+                f"Failed to capture Voyage Schedule screenshot: {e}",
             )
 
         # Send to Gemini Vision API for grid parsing
@@ -268,7 +268,7 @@ class PrimeDriver:
         if not grid_rows:
             # Close the dialog before raising
             try:
-                voyage_dlg.child_window(title="C&lose").click_input()
+                voyage_dlg.close()
             except Exception:
                 send_keys("%{F4}")
             raise PrimeError(
@@ -283,7 +283,7 @@ class PrimeDriver:
         if target_row is None:
             # Close the dialog before raising
             try:
-                voyage_dlg.child_window(title="C&lose").click_input()
+                voyage_dlg.close()
             except Exception:
                 send_keys("%{F4}")
             raise PrimeError(
@@ -293,24 +293,24 @@ class PrimeDriver:
             )
 
         # Navigate to the target row using arrow keys
-        # First click on the grid to ensure it has focus
-        grid.click_input()
+        # Click on the dialog to ensure it has focus
+        voyage_dlg.click_input()
         time.sleep(0.2)
 
-        # Press Home to go to first row, then Down arrow to target row
-        send_keys("{HOME}")
+        # Press Ctrl+Home to go to first row, then Down arrow to target row
+        send_keys("^{HOME}")
         time.sleep(0.1)
         for _ in range(target_row):
             send_keys("{DOWN}")
             time.sleep(0.1)
 
-        # Click Select button on the toolbar
+        # Click Select button
         try:
-            select_btn = voyage_dlg.child_window(title="Select")
+            select_btn = voyage_dlg.child_window(title="Select", control_type="Button")
             select_btn.click_input()
         except Exception:
-            # Fallback: double-click the grid row
-            grid.double_click_input()
+            # Fallback: press Enter
+            send_keys("{ENTER}")
 
         time.sleep(0.5)
 
