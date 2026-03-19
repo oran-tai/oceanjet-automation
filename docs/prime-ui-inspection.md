@@ -11,7 +11,8 @@
 | Window title | `Prime Software - OCEAN FAST FERRIES CORPORATION Build 20231109E` |
 | UI framework | **Delphi VCL** (Borland/Embarcadero) |
 | Class names | `TDataFormBaseGenericSelectForm`, `TDBGrid`, `TButton`, `TPanel`, `TEdit`, `TScrollBox`, `TToolBar` |
-| pywinauto backend | **`win32`** for Delphi class names, **`uia`** for control tree navigation |
+| pywinauto backend | **`uia`** for all interactions (win32 fails with 64-bit Python on 32-bit PRIME) |
+| Python note | VM has 64-bit Python 3.12; PRIME is 32-bit — must use UIA backend + PIL ImageGrab for screenshots |
 
 ## Key Discovery: Control Tree Order
 
@@ -21,7 +22,7 @@ The Accessibility Insights / UIA control tree lists children in **reverse visual
 
 Most leaf controls (Edit, ComboBox) have no `Name` property. We identify them using:
 
-1. **Parent pane name + child index** — pane names exist (`'Trip Details'`, `'Personal Details'`, `'Trip Type'`), and child order within each pane is stable
+1. **Parent pane name + child index** — pane names exist (`' Trip Details '`, `' Personal Details '`, `' Trip Type '`) with leading/trailing spaces. Use `title_re=" *Trip Details *"` in pywinauto. Child order within each pane is stable.
 2. **Control type filtering** — e.g., `trip_details.children(control_type='Edit')[1]` for the departure date
 3. **BoundingRectangle** — fixed coordinates as a fallback (PRIME runs at fixed resolution)
 
@@ -37,19 +38,22 @@ Accessed via: **Transactions → Passage → Issue New Ticket** (left sidebar tr
 window 'Prime Software - OCEAN FAST FERRIES CORPORATION Build 20231109E'
 └── pane ''
     └── tab ''
-        └── pane 'ISSUE NEW TICKET'
-            └── pane 'ISSUE NEW TICKET'
+        └── pane 'ISSUE NEW TICKET'          ← found_index=0 (two panes share this name)
+            └── pane 'ISSUE NEW TICKET'      ← found_index=1
+                ├── button 'Refresh'
+                ├── button ' Issue'
+                ├── button 'Close'
                 └── pane ''
                     ├── pane 'Special Terminal Fee (Optional)'
-                    ├── pane 'Trip Availability'
-                    ├── pane 'Rates'
-                    ├── pane 'Promo /Discounts'
-                    ├── pane 'Personal Details'
-                    ├── pane 'Trip Details'
-                    │   └── pane 'Trip Type'
-                    ├── button 'Issue'
-                    └── button 'Close'
+                    ├── pane ' Trip Availability '
+                    ├── pane ' Rates '
+                    ├── pane ' Promo /Discounts '
+                    ├── pane ' Personal Details '
+                    ├── pane ' Trip Details '
+                    │   └── pane ' Trip Type '
 ```
+
+**Important:** Pane names have leading/trailing spaces (e.g., `' Trip Details '` not `'Trip Details'`). Use `title_re` for matching. The two `'ISSUE NEW TICKET'` panes cause ambiguity — find child panes directly from `main_window` using `title_re` instead.
 
 ### pane 'Trip Details' — Control Map
 
@@ -58,8 +62,8 @@ window 'Prime Software - OCEAN FAST FERRIES CORPORATION Build 20231109E'
 | Tree Index | Control Type | Visual Field | Notes |
 |---|---|---|---|
 | combo box [0] | ComboBox | **Accom. Type Code** | Dropdown: TC, BC, OA |
-| edit [0] | Edit | **Return Date** | Format: `_M/DD/YY` |
-| edit [1] | Edit | **Departure Date** | Format: `_M/DD/YY` |
+| edit [0] | Edit | **Return Date** | Masked edit `_M/DD/YY` — type MMDDYY digits only, mask inserts slashes. Use `{HOME}` then digits. |
+| edit [1] | Edit | **Departure Date** | Masked edit `_M/DD/YY` — same as above |
 | button [0] | Button `...` | **Return Voyage search** | Opens Voyage Schedule for return |
 | edit [2] | Edit | **Return Voy. No.** | Auto-filled after voyage selection |
 | button [1] | Button `...` | **Voyage search** | Opens Voyage Schedule for departure |
@@ -164,13 +168,14 @@ We tested multiple approaches to read the TDBGrid data:
 | Keyboard navigation (arrow keys) | **Works** — Up/Down arrows move row selection |
 | Tesseract OCR | **Not installed** — download failed due to TLS issues on Windows Server 2019 |
 
-**Chosen approach: Screenshot → Claude API (vision)**
+**Chosen approach: PIL ImageGrab → Gemini Flash (vision)**
 
-1. Capture grid screenshot via `grid.capture_as_image()`
-2. Send to Claude API with a prompt asking to extract departure times and row positions
-3. Match the target departure time to the correct row number
-4. Use keyboard arrow keys (`{DOWN}` / `{UP}`) to navigate to that row
-5. Double-click or click `Select` button to select the voyage
+1. Find Voyage Schedule dialog via UIA backend (not win32 — 32/64-bit mismatch)
+2. Capture dialog screenshot via `PIL.ImageGrab.grab(bbox=rect)` (more reliable than `capture_as_image()` with 32-bit apps)
+3. Send to Gemini Flash API to extract rows as JSON
+4. Match the target departure time to the correct row number
+5. Use keyboard arrow keys (`{DOWN}` / `{UP}`) to navigate to that row
+6. Click `Select` button to select the voyage
 
 This is reliable, handles any grid layout, and the grid is small (<10 rows typically) so the API call is fast and cheap.
 
@@ -197,7 +202,7 @@ This is reliable, handles any grid layout, and the grid is small (<10 rows typic
 
 | Backend | Use Case |
 |---|---|
-| `win32` | Delphi-specific class names (`TDBGrid`, `TButton`, `TPanel`), toolbar access |
-| `uia` | Control tree hierarchy, pane names, radio button names, `print_control_identifiers()` |
+| `uia` | **All interactions** — control tree, pane names, radio buttons, buttons, edits, combo boxes |
+| `win32` | **Not used** — 64-bit Python cannot reliably interact with 32-bit PRIME via win32 backend |
 
-Both backends can connect to PRIME. Use `win32` for the Voyage Schedule dialog (TDBGrid access), and `uia` for the main ISSUE NEW TICKET form (pane-based navigation).
+Use `uia` for everything. For the Voyage Schedule grid (TDBGrid), capture a screenshot via `PIL.ImageGrab` and use Gemini Vision to read it.
