@@ -38,47 +38,21 @@ class PrimeDriver:
 
         self.gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-    def ensure_issue_new_ticket_screen(self):
-        """Navigate to the Issue New Ticket screen if not already there."""
-        try:
-            # Check if the ISSUE NEW TICKET pane already exists
-            issue_pane = self.main_window.child_window(
-                title="ISSUE NEW TICKET", control_type="Pane"
-            )
-            if issue_pane.exists(timeout=2):
-                logger.info("Already on Issue New Ticket screen")
-                return
-        except Exception:
-            pass
+    def verify_issue_new_ticket_screen(self):
+        """Verify that PRIME is on the Issue New Ticket screen.
 
-        # Navigate via sidebar tree: Transactions -> Passage -> Issue New Ticket
-        logger.info("Navigating to Issue New Ticket via sidebar tree")
-        try:
-            tree = self.main_window.child_window(control_type="Tree")
-            transactions = tree.get_item("Transactions")
-            transactions.expand()
-            time.sleep(0.5)
-            passage = transactions.get_item("Passage")
-            passage.expand()
-            time.sleep(0.5)
-            issue_item = passage.get_item("Issue New Ticket")
-            issue_item.click_input()
-            time.sleep(1)
-        except Exception as e:
-            raise PrimeError(
-                TicketErrorCode.RPA_INTERNAL_ERROR,
-                f"Failed to navigate to Issue New Ticket: {e}",
-            )
-
-        # Verify the screen loaded
+        Assumes the operator has already navigated to this screen.
+        """
         issue_pane = self.main_window.child_window(
             title="ISSUE NEW TICKET", control_type="Pane"
         )
-        if not issue_pane.exists(timeout=PRIME_TIMEOUT_SEC):
+        if not issue_pane.exists(timeout=5):
             raise PrimeError(
-                TicketErrorCode.PRIME_TIMEOUT,
-                "Issue New Ticket screen did not load",
+                TicketErrorCode.RPA_INTERNAL_ERROR,
+                "PRIME is not on the Issue New Ticket screen. "
+                "Please navigate to Transactions > Passage > Issue New Ticket first.",
             )
+        logger.info("Verified: on Issue New Ticket screen")
 
     def _get_issue_pane(self):
         """Get the innermost ISSUE NEW TICKET pane."""
@@ -409,7 +383,7 @@ class PrimeDriver:
             f"({booking_type}, {len(passengers)} passengers)"
         )
 
-        self.ensure_issue_new_ticket_screen()
+        self.verify_issue_new_ticket_screen()
 
         if booking_type == "one-way":
             for i, pax in enumerate(passengers):
