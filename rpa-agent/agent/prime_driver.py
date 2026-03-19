@@ -190,6 +190,33 @@ class PrimeDriver:
             logger.info(f"Selected return voyage: {return_voyage_no}")
             time.sleep(0.5)
 
+    def _close_voyage_dialog(self, voyage_dlg):
+        """Reliably close the Voyage Schedule dialog.
+
+        Delphi forms may not respond to .close() — use the C&lose button
+        or Alt+F4 as fallbacks, then verify it's gone.
+        """
+        try:
+            close_btn = voyage_dlg.child_window(title="C&lose", control_type="Button")
+            if close_btn.exists(timeout=1):
+                close_btn.click_input()
+                time.sleep(0.5)
+                return
+        except Exception:
+            pass
+
+        try:
+            voyage_dlg.close()
+            time.sleep(0.5)
+            if not voyage_dlg.exists(timeout=1):
+                return
+        except Exception:
+            pass
+
+        # Last resort
+        send_keys("%{F4}")
+        time.sleep(0.5)
+
     def select_voyage(self, target_time: str) -> str:
         """Select a voyage from the Voyage Schedule dialog using Gemini Vision.
 
@@ -278,11 +305,7 @@ class PrimeDriver:
             )
 
         if not grid_rows:
-            # Close the dialog before raising
-            try:
-                voyage_dlg.close()
-            except Exception:
-                send_keys("%{F4}")
+            self._close_voyage_dialog(voyage_dlg)
             raise PrimeError(
                 TicketErrorCode.TRIP_NOT_FOUND,
                 "Voyage Schedule grid is empty - no voyages available",
@@ -293,11 +316,7 @@ class PrimeDriver:
         target_row = match_departure_time(target_time, grid_times)
 
         if target_row is None:
-            # Close the dialog before raising
-            try:
-                voyage_dlg.close()
-            except Exception:
-                send_keys("%{F4}")
+            self._close_voyage_dialog(voyage_dlg)
             raise PrimeError(
                 TicketErrorCode.VOYAGE_TIME_MISMATCH,
                 f"No voyage matches departure time {target_time}. "
