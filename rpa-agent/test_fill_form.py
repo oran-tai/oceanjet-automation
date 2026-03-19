@@ -155,8 +155,16 @@ def main():
 
     try:
         driver = PrimeDriver()
-        driver.fill_booking(booking)
-        logger.info("SUCCESS: Form fill complete. Check PRIME via AnyDesk to verify fields.")
+        result = driver.fill_booking(booking)
+        if result["success"]:
+            logger.info("SUCCESS: Form fill complete. Check PRIME via AnyDesk to verify fields.")
+        else:
+            logger.error(f"FAILED: {result.get('errorCode')} - {result.get('error')}")
+            if result.get("partialResults"):
+                for pr in result["partialResults"]:
+                    status = "OK" if pr["success"] else f"FAILED ({pr.get('errorCode')})"
+                    logger.info(f"  {pr['passengerName']}: {status}")
+            sys.exit(1)
     except Exception as e:
         logger.error(f"FAILED: {e}")
         sys.exit(1)

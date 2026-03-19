@@ -12,7 +12,7 @@ from pywinauto.keyboard import send_keys
 
 from agent.config import PRIME_WINDOW_TITLE, PRIME_TIMEOUT_SEC, GEMINI_API_KEY
 from agent.date_utils import bookaway_date_to_prime, match_departure_time
-from agent.error_codes import TicketErrorCode, PrimeError
+from agent.error_codes import TicketErrorCode, PrimeError, SYSTEM_ERROR_CODES
 
 logger = logging.getLogger("rpa-agent")
 
@@ -392,11 +392,70 @@ class PrimeDriver:
             send_keys(contact_info, with_spaces=True)
             time.sleep(0.2)
 
-    def fill_booking(self, booking: dict):
-        """Fill PRIME forms for an entire booking (Phase 1: no Issue click).
+    def _build_ticket_tasks(self, booking: dict):
+        """Build the list of (passenger_index, passenger, leg, trip_type, return_leg, label)
+        tuples that represent each individual ticket to issue.
 
-        Args:
-            booking: TranslatedBooking dict from the orchestrator.
+        Each task = one form fill + one Issue click = one ticket.
+        """
+        booking_type = booking["bookingType"]
+        passengers = booking["passengers"]
+        tasks = []
+
+        if booking_type == "one-way":
+            for i, pax in enumerate(passengers):
+                tasks.append((
+                    i, pax, booking["departureLeg"], "One Way", None,
+                    f"Pax {i+1}/{len(passengers)} departure",
+                    "departure",
+                ))
+
+        elif booking_type == "round-trip":
+            for i, pax in enumerate(passengers):
+                tasks.append((
+                    i, pax, booking["departureLeg"], "Round Trip",
+                    booking.get("returnLeg"),
+                    f"Pax {i+1}/{len(passengers)} round-trip",
+                    "departure",
+                ))
+
+        elif booking_type == "connecting-one-way":
+            for i, pax in enumerate(passengers):
+                for j, leg in enumerate(booking["connectingLegs"]):
+                    tasks.append((
+                        i, pax, leg, "One Way", None,
+                        f"Pax {i+1}/{len(passengers)} leg {j+1}/2",
+                        "departure",
+                    ))
+
+        elif booking_type == "connecting-round-trip":
+            for i, pax in enumerate(passengers):
+                for j, leg in enumerate(booking["connectingLegs"]):
+                    tasks.append((
+                        i, pax, leg, "One Way", None,
+                        f"Pax {i+1}/{len(passengers)} dep leg {j+1}/2",
+                        "departure",
+                    ))
+            for i, pax in enumerate(passengers):
+                for j, leg in enumerate(booking["connectingReturnLegs"]):
+                    tasks.append((
+                        i, pax, leg, "One Way", None,
+                        f"Pax {i+1}/{len(passengers)} ret leg {j+1}/2",
+                        "return",
+                    ))
+
+        return tasks
+
+    def fill_booking(self, booking: dict) -> dict:
+        """Fill PRIME forms for an entire booking, tracking per-passenger results.
+
+        Returns a dict with:
+            success: bool - True if all passengers succeeded
+            departureTickets: list[str] - ticket numbers for departure legs
+            returnTickets: list[str] - ticket numbers for return legs
+            partialResults: list[dict] - per-passenger results
+            errorCode: str | None - error code if failed
+            error: str | None - error message if failed
         """
         booking_type = booking["bookingType"]
         passengers = booking["passengers"]
@@ -409,60 +468,101 @@ class PrimeDriver:
 
         self.verify_issue_new_ticket_screen()
 
-        if booking_type == "one-way":
-            for i, pax in enumerate(passengers):
-                logger.info(f"Passenger {i + 1}/{len(passengers)}")
-                self.click_refresh()
-                self.fill_trip_details(booking["departureLeg"], "One Way")
-                self.fill_personal_details(pax, contact_info)
-                logger.info(f"[Phase 1] Form filled for passenger {i + 1} - NOT clicking Issue")
+        tasks = self._build_ticket_tasks(booking)
+        departure_tickets = []
+        return_tickets = []
 
-        elif booking_type == "round-trip":
-            for i, pax in enumerate(passengers):
-                logger.info(f"Passenger {i + 1}/{len(passengers)}")
+        # Track per-passenger results: {pax_index: {tickets, success, error}}
+        pax_results = {}
+        for i, pax in enumerate(passengers):
+            pax_name = f"{pax['firstName']} {pax['lastName']}"
+            pax_results[i] = {
+                "passengerIndex": i,
+                "passengerName": pax_name,
+                "tickets": [],
+                "success": True,
+            }
+
+        has_failure = False
+        last_error_code = None
+        last_error_msg = None
+
+        for pax_idx, pax, leg, trip_type, return_leg, label, leg_type in tasks:
+            logger.info(f"--- {label} ---")
+            try:
                 self.click_refresh()
-                self.fill_trip_details(
-                    booking["departureLeg"],
-                    "Round Trip",
-                    return_leg=booking.get("returnLeg"),
+                self.fill_trip_details(leg, trip_type, return_leg=return_leg)
+                self.fill_personal_details(pax, contact_info)
+
+                # Phase 1: no Issue click — ticket number is empty
+                ticket_no = ""  # Phase 2: will be populated after clicking Issue
+                logger.info(f"[Phase 1] Form filled for {label} - NOT clicking Issue")
+
+                if ticket_no:
+                    pax_results[pax_idx]["tickets"].append(ticket_no)
+                    if leg_type == "departure":
+                        departure_tickets.append(ticket_no)
+                    else:
+                        return_tickets.append(ticket_no)
+
+            except PrimeError as e:
+                has_failure = True
+                last_error_code = e.error_code
+                last_error_msg = e.message
+                pax_results[pax_idx]["success"] = False
+                pax_results[pax_idx]["errorCode"] = e.error_code.value
+                pax_results[pax_idx]["error"] = e.message
+                logger.error(
+                    f"FAILED {label}: [{e.error_code.value}] {e.message}"
                 )
-                self.fill_personal_details(pax, contact_info)
-                logger.info(f"[Phase 1] Form filled for passenger {i + 1} - NOT clicking Issue")
 
-        elif booking_type == "connecting-one-way":
-            for i, pax in enumerate(passengers):
-                for j, leg in enumerate(booking["connectingLegs"]):
-                    logger.info(
-                        f"Passenger {i + 1}/{len(passengers)}, Leg {j + 1}/2"
-                    )
+                # System-level errors: stop processing entirely
+                if e.error_code in SYSTEM_ERROR_CODES:
+                    logger.error("System-level error, stopping booking")
+                    break
+
+                # Booking-level errors: reset and continue to next task
+                try:
                     self.click_refresh()
-                    self.fill_trip_details(leg, "One Way")
-                    self.fill_personal_details(pax, contact_info)
-                    logger.info(f"[Phase 1] Form filled - NOT clicking Issue")
+                except Exception:
+                    pass
+                continue
 
-        elif booking_type == "connecting-round-trip":
-            # Departure legs
-            for i, pax in enumerate(passengers):
-                for j, leg in enumerate(booking["connectingLegs"]):
-                    logger.info(
-                        f"Passenger {i + 1}/{len(passengers)}, "
-                        f"Departure Leg {j + 1}/2"
-                    )
-                    self.click_refresh()
-                    self.fill_trip_details(leg, "One Way")
-                    self.fill_personal_details(pax, contact_info)
-                    logger.info(f"[Phase 1] Form filled - NOT clicking Issue")
+        partial_results = list(pax_results.values())
+        any_success = any(r["success"] for r in partial_results)
 
-            # Return legs
-            for i, pax in enumerate(passengers):
-                for j, leg in enumerate(booking["connectingReturnLegs"]):
-                    logger.info(
-                        f"Passenger {i + 1}/{len(passengers)}, "
-                        f"Return Leg {j + 1}/2"
-                    )
-                    self.click_refresh()
-                    self.fill_trip_details(leg, "One Way")
-                    self.fill_personal_details(pax, contact_info)
-                    logger.info(f"[Phase 1] Form filled - NOT clicking Issue")
+        if not has_failure:
+            logger.info(f"Booking {booking.get('bookingId', 'N/A')} complete — all passengers OK")
+            return {
+                "success": True,
+                "departureTickets": departure_tickets,
+                "returnTickets": return_tickets,
+                "partialResults": None,
+            }
 
-        logger.info(f"Booking {booking.get('bookingId', 'N/A')} form fill complete")
+        if any_success:
+            # Partial failure: some passengers succeeded, some failed
+            logger.warn(
+                f"Booking {booking.get('bookingId', 'N/A')} partial failure"
+            )
+            return {
+                "success": False,
+                "departureTickets": departure_tickets,
+                "returnTickets": return_tickets,
+                "errorCode": last_error_code.value if last_error_code else None,
+                "error": last_error_msg,
+                "partialResults": partial_results,
+            }
+
+        # Total failure: all passengers failed
+        logger.error(
+            f"Booking {booking.get('bookingId', 'N/A')} total failure"
+        )
+        return {
+            "success": False,
+            "departureTickets": [],
+            "returnTickets": [],
+            "errorCode": last_error_code.value if last_error_code else None,
+            "error": last_error_msg,
+            "partialResults": partial_results,
+        }

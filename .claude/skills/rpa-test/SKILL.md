@@ -70,7 +70,7 @@ def main():
     # Importing pywinauto at module level before the sys.path fix
     # can cause import failures.
     from agent.prime_driver import PrimeDriver
-    from agent.error_codes import PrimeError, TicketErrorCode
+    from agent.error_codes import TicketErrorCode
 
     logger.info("=" * 60)
     logger.info("TEST: <ERROR_CODE> error + recovery")
@@ -78,19 +78,18 @@ def main():
 
     driver = PrimeDriver()
 
-    # 1. Invalid booking should raise the target error
+    # 1. Invalid booking should return the target error
     logger.info("")
     logger.info("--- Booking 1: <describe why it fails> (should fail) ---")
-    try:
-        driver.fill_booking(INVALID_BOOKING)
+    result = driver.fill_booking(INVALID_BOOKING)
+    if not result["success"] and result.get("errorCode") == TicketErrorCode.<ERROR_CODE>.value:
+        logger.info(f"PASS: Got expected error: {result['errorCode']} - {result.get('error')}")
+    elif result["success"]:
         logger.error("FAIL: Expected <ERROR_CODE> but fill_booking succeeded")
         sys.exit(1)
-    except PrimeError as e:
-        if e.error_code == TicketErrorCode.<ERROR_CODE>:
-            logger.info(f"PASS: Got expected error: {e.error_code.value} - {e.message}")
-        else:
-            logger.error(f"FAIL: Expected <ERROR_CODE>, got {e.error_code.value}")
-            sys.exit(1)
+    else:
+        logger.error(f"FAIL: Expected <ERROR_CODE>, got {result.get('errorCode')}")
+        sys.exit(1)
 
     # 2. Reset form for recovery test
     logger.info("")
@@ -100,11 +99,11 @@ def main():
     # 3. Valid booking should succeed (proves the agent recovered)
     logger.info("")
     logger.info("--- Booking 2: valid CEB->TAG (should succeed) ---")
-    try:
-        driver.fill_booking(VALID_BOOKING)
+    result = driver.fill_booking(VALID_BOOKING)
+    if result["success"]:
         logger.info("PASS: Valid booking filled successfully - recovery confirmed")
-    except Exception as e:
-        logger.error(f"FAIL: Valid booking failed after recovery: {e}")
+    else:
+        logger.error(f"FAIL: Valid booking failed after recovery: {result.get('error')}")
         sys.exit(1)
 
     logger.info("")

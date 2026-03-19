@@ -129,23 +129,17 @@ async def issue_tickets(
 
     try:
         driver = PrimeDriver()
-        driver.fill_booking(booking.model_dump())
+        result = driver.fill_booking(booking.model_dump())
 
-        # Phase 1: return success with empty ticket arrays (dry run)
         return TicketResult(
-            success=True,
-            departureTickets=[],
-            returnTickets=[],
-        )
-
-    except PrimeError as e:
-        logger.error(f"PRIME error: {e}")
-        return TicketResult(
-            success=False,
-            departureTickets=[],
-            returnTickets=[],
-            errorCode=e.error_code.value,
-            error=e.message,
+            success=result["success"],
+            departureTickets=result.get("departureTickets", []),
+            returnTickets=result.get("returnTickets", []),
+            errorCode=result.get("errorCode"),
+            error=result.get("error"),
+            partialResults=[
+                PartialResult(**pr) for pr in result["partialResults"]
+            ] if result.get("partialResults") else None,
         )
 
     except Exception as e:

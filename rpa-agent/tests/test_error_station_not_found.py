@@ -75,19 +75,18 @@ def main():
 
     driver = PrimeDriver()
 
-    # 1. Invalid booking should raise STATION_NOT_FOUND
+    # 1. Invalid booking should return STATION_NOT_FOUND
     logger.info("")
     logger.info("--- Booking 1: invalid origin 'ABC' (should fail) ---")
-    try:
-        driver.fill_booking(INVALID_BOOKING)
+    result = driver.fill_booking(INVALID_BOOKING)
+    if not result["success"] and result.get("errorCode") == TicketErrorCode.STATION_NOT_FOUND.value:
+        logger.info(f"PASS: Got expected error: {result['errorCode']} - {result.get('error')}")
+    elif result["success"]:
         logger.error("FAIL: Expected STATION_NOT_FOUND but fill_booking succeeded")
         sys.exit(1)
-    except PrimeError as e:
-        if e.error_code == TicketErrorCode.STATION_NOT_FOUND:
-            logger.info(f"PASS: Got expected error: {e.error_code.value} - {e.message}")
-        else:
-            logger.error(f"FAIL: Expected STATION_NOT_FOUND, got {e.error_code.value}")
-            sys.exit(1)
+    else:
+        logger.error(f"FAIL: Expected STATION_NOT_FOUND, got {result.get('errorCode')}")
+        sys.exit(1)
 
     # 2. Reset form
     logger.info("")
@@ -97,11 +96,11 @@ def main():
     # 3. Valid booking should succeed
     logger.info("")
     logger.info("--- Booking 2: valid CEB->TAG (should succeed) ---")
-    try:
-        driver.fill_booking(VALID_BOOKING)
+    result = driver.fill_booking(VALID_BOOKING)
+    if result["success"]:
         logger.info("PASS: Valid booking filled successfully - recovery confirmed")
-    except Exception as e:
-        logger.error(f"FAIL: Valid booking failed after recovery: {e}")
+    else:
+        logger.error(f"FAIL: Valid booking failed after recovery: {result.get('error')}")
         sys.exit(1)
 
     logger.info("")

@@ -76,27 +76,26 @@ def main():
 
     driver = PrimeDriver()
 
-    # 1. Booking with 2:00 AM should raise VOYAGE_TIME_MISMATCH (no ferry at that hour)
+    # 1. Booking with 2:00 AM should return VOYAGE_TIME_MISMATCH (no ferry at that hour)
     logger.info("")
     logger.info("--- Booking 1: departure at 2:00 AM (should fail) ---")
-    try:
-        driver.fill_booking(INVALID_BOOKING)
+    result = driver.fill_booking(INVALID_BOOKING)
+    if not result["success"] and result.get("errorCode") == TicketErrorCode.VOYAGE_TIME_MISMATCH.value:
+        logger.info(f"PASS: Got expected error: {result['errorCode']} - {result.get('error')}")
+        # Send Slack alert like the orchestrator would
+        from agent.notifications import notify_booking_error
+        notify_booking_error(
+            INVALID_BOOKING["reference"],
+            result["errorCode"],
+            result.get("error", ""),
+        )
+        logger.info("Slack alert sent")
+    elif result["success"]:
         logger.error("FAIL: Expected VOYAGE_TIME_MISMATCH but fill_booking succeeded")
         sys.exit(1)
-    except PrimeError as e:
-        if e.error_code == TicketErrorCode.VOYAGE_TIME_MISMATCH:
-            logger.info(f"PASS: Got expected error: {e.error_code.value} - {e.message}")
-            # Send Slack alert like the orchestrator would
-            from agent.notifications import notify_booking_error
-            notify_booking_error(
-                INVALID_BOOKING["reference"],
-                e.error_code.value,
-                e.message,
-            )
-            logger.info("Slack alert sent")
-        else:
-            logger.error(f"FAIL: Expected VOYAGE_TIME_MISMATCH, got {e.error_code.value}")
-            sys.exit(1)
+    else:
+        logger.error(f"FAIL: Expected VOYAGE_TIME_MISMATCH, got {result.get('errorCode')}")
+        sys.exit(1)
 
     # 2. Reset form
     logger.info("")
@@ -106,11 +105,11 @@ def main():
     # 3. Valid booking should succeed
     logger.info("")
     logger.info("--- Booking 2: valid CEB->TAG at 6:00 AM (should succeed) ---")
-    try:
-        driver.fill_booking(VALID_BOOKING)
+    result = driver.fill_booking(VALID_BOOKING)
+    if result["success"]:
         logger.info("PASS: Valid booking filled successfully - recovery confirmed")
-    except Exception as e:
-        logger.error(f"FAIL: Valid booking failed after recovery: {e}")
+    else:
+        logger.error(f"FAIL: Valid booking failed after recovery: {result.get('error')}")
         sys.exit(1)
 
     logger.info("")

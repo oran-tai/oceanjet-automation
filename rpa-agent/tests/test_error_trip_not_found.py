@@ -75,19 +75,18 @@ def main():
 
     driver = PrimeDriver()
 
-    # 1. Past date booking should raise TRIP_NOT_FOUND (empty voyage grid)
+    # 1. Past date booking should return TRIP_NOT_FOUND (empty voyage grid)
     logger.info("")
     logger.info("--- Booking 1: past date Jan 2025 (should fail) ---")
-    try:
-        driver.fill_booking(INVALID_BOOKING)
+    result = driver.fill_booking(INVALID_BOOKING)
+    if not result["success"] and result.get("errorCode") == TicketErrorCode.TRIP_NOT_FOUND.value:
+        logger.info(f"PASS: Got expected error: {result['errorCode']} - {result.get('error')}")
+    elif result["success"]:
         logger.error("FAIL: Expected TRIP_NOT_FOUND but fill_booking succeeded")
         sys.exit(1)
-    except PrimeError as e:
-        if e.error_code == TicketErrorCode.TRIP_NOT_FOUND:
-            logger.info(f"PASS: Got expected error: {e.error_code.value} - {e.message}")
-        else:
-            logger.error(f"FAIL: Expected TRIP_NOT_FOUND, got {e.error_code.value}")
-            sys.exit(1)
+    else:
+        logger.error(f"FAIL: Expected TRIP_NOT_FOUND, got {result.get('errorCode')}")
+        sys.exit(1)
 
     # 2. Reset form
     logger.info("")
@@ -97,11 +96,11 @@ def main():
     # 3. Valid booking should succeed
     logger.info("")
     logger.info("--- Booking 2: valid CEB->TAG Mar 2026 (should succeed) ---")
-    try:
-        driver.fill_booking(VALID_BOOKING)
+    result = driver.fill_booking(VALID_BOOKING)
+    if result["success"]:
         logger.info("PASS: Valid booking filled successfully - recovery confirmed")
-    except Exception as e:
-        logger.error(f"FAIL: Valid booking failed after recovery: {e}")
+    else:
+        logger.error(f"FAIL: Valid booking failed after recovery: {result.get('error')}")
         sys.exit(1)
 
     logger.info("")
