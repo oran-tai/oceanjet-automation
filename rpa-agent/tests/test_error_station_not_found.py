@@ -4,16 +4,16 @@ Verifies that the RPA raises STATION_NOT_FOUND when a booking has an
 invalid origin station, then recovers and successfully fills a valid booking.
 
 Run on the VM with PRIME open on Issue New Ticket:
-    py -m pytest tests/test_error_station_not_found.py -v -s
+    py tests/test_error_station_not_found.py
 """
 
 import logging
 import sys
 
-# Fix COM threading for pywinauto UIA under pytest
-sys.coinit_flags = 0  # COINIT_MULTITHREADED
-import comtypes  # noqa: E402
-
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 logger = logging.getLogger("test-error")
 
 INVALID_BOOKING = {
@@ -61,29 +61,50 @@ VALID_BOOKING = {
 }
 
 
-def test_station_not_found_then_recovery():
-    """Invalid station fails with STATION_NOT_FOUND, then valid booking succeeds."""
+def main():
     from agent.prime_driver import PrimeDriver
     from agent.error_codes import PrimeError, TicketErrorCode
+
+    logger.info("=" * 60)
+    logger.info("TEST: STATION_NOT_FOUND error + recovery")
+    logger.info("=" * 60)
 
     driver = PrimeDriver()
 
     # 1. Invalid booking should raise STATION_NOT_FOUND
+    logger.info("")
     logger.info("--- Booking 1: invalid origin 'ABC' (should fail) ---")
     try:
         driver.fill_booking(INVALID_BOOKING)
-        assert False, "Expected PrimeError but fill_booking succeeded"
+        logger.error("FAIL: Expected STATION_NOT_FOUND but fill_booking succeeded")
+        sys.exit(1)
     except PrimeError as e:
-        logger.info(f"Got expected error: {e.error_code.value} - {e.message}")
-        assert e.error_code == TicketErrorCode.STATION_NOT_FOUND, (
-            f"Expected STATION_NOT_FOUND, got {e.error_code.value}"
-        )
+        if e.error_code == TicketErrorCode.STATION_NOT_FOUND:
+            logger.info(f"PASS: Got expected error: {e.error_code.value} - {e.message}")
+        else:
+            logger.error(f"FAIL: Expected STATION_NOT_FOUND, got {e.error_code.value}")
+            sys.exit(1)
 
     # 2. Reset form
-    logger.info("--- Resetting form ---")
+    logger.info("")
+    logger.info("--- Resetting form for next booking ---")
     driver.click_refresh()
 
     # 3. Valid booking should succeed
+    logger.info("")
     logger.info("--- Booking 2: valid CEB->TAG (should succeed) ---")
-    driver.fill_booking(VALID_BOOKING)
-    logger.info("Valid booking filled successfully - recovery confirmed")
+    try:
+        driver.fill_booking(VALID_BOOKING)
+        logger.info("PASS: Valid booking filled successfully - recovery confirmed")
+    except Exception as e:
+        logger.error(f"FAIL: Valid booking failed after recovery: {e}")
+        sys.exit(1)
+
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("TEST PASSED")
+    logger.info("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
