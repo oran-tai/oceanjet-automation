@@ -8,7 +8,11 @@ Run on the VM with PRIME open on Issue New Ticket:
 """
 
 import logging
+import os
 import sys
+
+# Ensure agent package is importable when running as standalone script
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 logging.basicConfig(
     level=logging.INFO,
