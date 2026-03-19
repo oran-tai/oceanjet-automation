@@ -81,17 +81,26 @@ if (-Not (Test-Path "$INSTALL_DIR\.env")) {
     if ([string]::IsNullOrWhiteSpace($rpaToken)) {
         $rpaToken = "oceanjet-rpa-secret-2026"
     }
+    $slackUrl = Read-Host "  Enter SLACK_WEBHOOK_URL (press Enter to skip)"
 
     @"
 RPA_AUTH_TOKEN=$rpaToken
 GEMINI_API_KEY=$geminiKey
 RPA_PORT=8080
 PRIME_TIMEOUT_SEC=30
+SLACK_WEBHOOK_URL=$slackUrl
 "@ | Set-Content "$INSTALL_DIR\.env"
 
     Write-Host "  .env created" -ForegroundColor Green
 } else {
-    Write-Host "[5/5] .env already exists, skipping" -ForegroundColor Green
+    Write-Host "[5/5] .env already exists" -ForegroundColor Green
+    # Add SLACK_WEBHOOK_URL if missing from existing .env
+    $envContent = Get-Content "$INSTALL_DIR\.env" -Raw
+    if ($envContent -notmatch "SLACK_WEBHOOK_URL") {
+        $slackUrl = Read-Host "  Enter SLACK_WEBHOOK_URL (press Enter to skip)"
+        Add-Content "$INSTALL_DIR\.env" -Value "`nSLACK_WEBHOOK_URL=$slackUrl"
+        Write-Host "  Added SLACK_WEBHOOK_URL to .env" -ForegroundColor Green
+    }
 }
 
 # --- Create desktop shortcut ---

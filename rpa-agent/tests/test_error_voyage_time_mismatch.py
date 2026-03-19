@@ -86,6 +86,14 @@ def main():
     except PrimeError as e:
         if e.error_code == TicketErrorCode.VOYAGE_TIME_MISMATCH:
             logger.info(f"PASS: Got expected error: {e.error_code.value} - {e.message}")
+            # Send Slack alert like the orchestrator would
+            from agent.notifications import notify_booking_error
+            notify_booking_error(
+                INVALID_BOOKING["reference"],
+                e.error_code.value,
+                e.message,
+            )
+            logger.info("Slack alert sent")
         else:
             logger.error(f"FAIL: Expected VOYAGE_TIME_MISMATCH, got {e.error_code.value}")
             sys.exit(1)
