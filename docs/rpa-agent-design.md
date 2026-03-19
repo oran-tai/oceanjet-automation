@@ -32,7 +32,7 @@ rpa-agent/
 ├── agent/
 │   ├── __init__.py
 │   ├── server.py          # FastAPI HTTP server (POST /issue-tickets, GET /health)
-│   ├── prime_driver.py    # pywinauto logic — connects to PRIME, fills forms, selects voyages
+│   ├── prime_driver.py    # pywinauto logic — drives PRIME UI to issue tickets
 │   ├── error_codes.py     # TicketErrorCode enum + PrimeError exception
 │   ├── date_utils.py      # Bookaway→PRIME date conversion, departure time matching
 │   └── config.py          # Port, auth token, timeouts, PRIME window title, Gemini API key
