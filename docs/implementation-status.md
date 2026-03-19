@@ -8,7 +8,7 @@
 
 ### Phase 1 TypeScript Orchestrator — Complete
 
-The full orchestrator is implemented, compiles cleanly, and has been verified against the live Bookaway API. 46 unit tests passing. 10/10 real bookings successfully mapped end-to-end.
+The full orchestrator is implemented, compiles cleanly, and has been verified against the live Bookaway API. 47 unit tests passing. 10/10 real bookings successfully mapped end-to-end.
 
 #### Core Components
 
@@ -17,7 +17,7 @@ The full orchestrator is implemented, compiles cleanly, and has been verified ag
 | **Configuration** | `src/config.ts`, `.env.example` | Done |
 | **Bookaway API Client** | `src/bookaway/client.ts`, `src/bookaway/types.ts` | Done — login, fetch bookings, fetch details, claim/release, approve. Auto token refresh on 401. |
 | **OceanJet Data Mapper** | `src/operators/oceanjet/mapper.ts`, `src/operators/oceanjet/config.ts` | Done — station codes (7 confirmed from live API + 12 from reference sheet), accommodation codes, connecting route detection (6 routes), passenger extraction from extraInfos. |
-| **Booking Processor** | `src/orchestrator/processor.ts` | Done — handles all 4 booking types, status re-check after fetch (skips non-pending), departure window validation, approval with 3x retry, structured error code routing (14 error codes: 10 booking-level → release + continue, 4 system-level → release + stop). |
+| **Booking Processor** | `src/orchestrator/processor.ts` | Done — handles all 4 booking types, status re-check after fetch (skips non-pending), passenger validation (pre-PRIME), departure window validation, conditional TRIP_NOT_FOUND alerting (≤7 days only), approval with 3x retry, structured error code routing (12 error codes: 8 booking-level → release + continue, 4 system-level → release + stop). |
 | **Orchestrator Loop** | `src/orchestrator/loop.ts`, `src/index.ts` | Done — continuous polling, claim-before-process, in-memory duplicate detection, graceful shutdown on SIGINT/SIGTERM. |
 | **Slack Notifications** | `src/notifications/slack.ts` | Done — booking failure, system failure, partial failure, session expired alerts. |
 | **Mock Operator** | `src/operators/mock/operator.ts` | Done — returns sequential fake ticket numbers for end-to-end testing without PRIME. |
@@ -32,8 +32,8 @@ The full orchestrator is implemented, compiles cleanly, and has been verified ag
 | `tests/time.test.ts` | 9 | Time conversion: noon, midnight, AM, PM, edge cases |
 | `tests/config.test.ts` | 21 | Station codes (including real API city names), accommodation codes, connecting routes |
 | `tests/mapper.test.ts` | 9 | All booking types, multi-passenger, real API city names, error cases |
-| `tests/processor.test.ts` | 7 | Success flow, booking-level failure (TRIP_SOLD_OUT), system-level RPA error (PRIME_CRASH), UNKNOWN_ERROR fallback, thrown system error, departure window skip, non-pending status skip |
-| **Total** | **46** | All passing |
+| `tests/processor.test.ts` | 8 | Success flow, booking-level failure (TRIP_SOLD_OUT), system-level RPA error (PRIME_CRASH), UNKNOWN_ERROR fallback, thrown system error, departure window skip, non-pending status skip, passenger validation error |
+| **Total** | **47** | All passing |
 
 #### Documentation
 
@@ -101,15 +101,31 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Pha
 - Voyage selection via PIL ImageGrab screenshot → Gemini Flash vision API
 - Handles all 4 booking types (one-way, round-trip, connecting-one-way, connecting-round-trip)
 - Error detection: `STATION_NOT_FOUND`, `TRIP_NOT_FOUND`, `VOYAGE_TIME_MISMATCH`, `ACCOMMODATION_UNAVAILABLE`, `PRIME_TIMEOUT`, `PRIME_CRASH`, `RPA_INTERNAL_ERROR`
-- One-click VM deployment via `setup.ps1`
+- Passenger validation in orchestrator (pre-PRIME): `PASSENGER_VALIDATION_ERROR`
+- Slack notifications from RPA agent (configurable via `SLACK_WEBHOOK_URL`)
+- One-click VM deployment via `setup.ps1` + `update-rpa` command
 - FastAPI HTTP server with bearer token auth
 
-**Tested on VM:**
-- `STATION_NOT_FOUND` — passed (invalid station code + recovery)
-- `TRIP_NOT_FOUND` — passed (past date empty grid + recovery)
-- Happy-path form fill (CEB→TAG one-way) — passed
+**Error Code Status (12 total):**
 
-**Not yet implemented:** Issue button click, ticket number capture, remaining error codes (Phase 2).
+| Error Code | Type | Implemented? | Tested? | Slack Alert? | How it's triggered | Orchestrator behavior |
+|---|---|---|---|---|---|---|
+| `STATION_NOT_FOUND` | Booking | Yes | **VM passed** | Always | Origin/destination not in PRIME dropdown | Skip booking, continue loop |
+| `TRIP_NOT_FOUND` | Booking | Yes | **VM passed** | Only if departure ≤ 7 days | Voyage Schedule grid is empty | Skip booking, continue loop |
+| `VOYAGE_TIME_MISMATCH` | Booking | Yes | **VM passed** | Always | No voyage matches departure time | Skip booking, continue loop |
+| `ACCOMMODATION_UNAVAILABLE` | Booking | Yes | **VM passed** | Always | Accommodation code not in dropdown | Skip booking, continue loop |
+| `PASSENGER_VALIDATION_ERROR` | Booking | Yes | **Unit test** | Always | Missing/invalid name, age, or gender | Skip booking, continue loop (pre-PRIME) |
+| `TRIP_SOLD_OUT` | Booking | No | — | Always | Voyage exists but no seats available | Skip booking, continue loop |
+| `PRIME_VALIDATION_ERROR` | Booking | No | — | Always | PRIME rejects form on Issue click (Phase 2) | Skip booking, continue loop |
+| `PRIME_TIMEOUT` | System | Yes | — | Always | Dialog doesn't appear in time | **Stop loop**, alert operator |
+| `PRIME_CRASH` | System | Yes | — | Always | Can't connect to PRIME process | **Stop loop**, alert operator |
+| `SESSION_EXPIRED` | System | No | — | Always | PRIME login session timed out | **Stop loop**, alert operator |
+| `RPA_INTERNAL_ERROR` | System | Yes | — | Always | Screenshot/API/internal failure | **Stop loop**, alert operator |
+| `UNKNOWN_ERROR` | Catch-all | No | — | Always | Unexpected unhandled exception | **Stop loop**, alert operator |
+
+**Score:** 8/12 implemented, 5/12 tested (4 VM + 1 unit test).
+
+**Not yet implemented:** Issue button click, ticket number capture, `TRIP_SOLD_OUT`, `PRIME_VALIDATION_ERROR`, `SESSION_EXPIRED` (all Phase 2).
 
 ### 3. End-to-End Test with Mock Operator
 
