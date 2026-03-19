@@ -107,11 +107,30 @@ CONNECTING_BOOKING = {
 }
 
 
+def debug_controls():
+    """Dump the PRIME control tree so we can see what pywinauto finds."""
+    from pywinauto import Application
+    from agent.config import PRIME_WINDOW_TITLE, PRIME_TIMEOUT_SEC
+
+    logger.info(f"Connecting to PRIME: {PRIME_WINDOW_TITLE}")
+    app = Application(backend="uia").connect(
+        title=PRIME_WINDOW_TITLE, timeout=PRIME_TIMEOUT_SEC
+    )
+    win = app.window(title=PRIME_WINDOW_TITLE)
+    logger.info("Dumping control tree (depth=4)...")
+    win.print_control_identifiers(depth=4)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Test PRIME form fill")
     parser.add_argument("--round-trip", action="store_true", help="Test round-trip booking")
     parser.add_argument("--connecting", action="store_true", help="Test connecting route booking")
+    parser.add_argument("--debug", action="store_true", help="Dump PRIME control tree and exit")
     args = parser.parse_args()
+
+    if args.debug:
+        debug_controls()
+        return
 
     if args.round_trip:
         booking = ROUND_TRIP_BOOKING
