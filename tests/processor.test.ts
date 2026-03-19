@@ -41,12 +41,13 @@ function nearFutureDate(): string {
 
 function makeBookingDetail(overrides: Partial<{
   departureDate: string;
+  status: string;
 }>): BookingDetail {
-  const { departureDate = nearFutureDate() } = overrides;
+  const { departureDate = nearFutureDate(), status = 'pending' } = overrides;
   return {
     _id: 'booking123',
     reference: 'BW1234567',
-    status: 'pending',
+    status,
     inProgressBy: null,
     contact: { email: 'test@test.com', phone: '+1234567890' },
     misc: {
@@ -184,6 +185,18 @@ describe('processBooking', () => {
 
     expect(result.status).toBe('system-error');
     expect(client.releaseBooking).toHaveBeenCalled();
+  });
+
+  it('skips bookings that are no longer pending', async () => {
+    const client = makeMockClient(makeBookingDetail({ status: 'confirmed' }));
+    const operator = makeMockOperator();
+    const summary = makeBookingSummary();
+
+    const result = await processBooking(summary, operator, client);
+
+    expect(result.status).toBe('skipped');
+    expect(result.reason).toContain('confirmed');
+    expect(operator.issueTickets).not.toHaveBeenCalled();
   });
 
   it('skips bookings with departure too far out', async () => {

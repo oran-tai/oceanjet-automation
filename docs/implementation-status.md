@@ -1,6 +1,6 @@
 # OceanJet Automation — Implementation Status
 
-**Last updated:** March 18, 2026
+**Last updated:** March 19, 2026
 
 ---
 
@@ -8,7 +8,7 @@
 
 ### Phase 1 TypeScript Orchestrator — Complete
 
-The full orchestrator is implemented, compiles cleanly, and has been verified against the live Bookaway API. 45 unit tests passing. 10/10 real bookings successfully mapped end-to-end.
+The full orchestrator is implemented, compiles cleanly, and has been verified against the live Bookaway API. 46 unit tests passing. 10/10 real bookings successfully mapped end-to-end.
 
 #### Core Components
 
@@ -17,7 +17,7 @@ The full orchestrator is implemented, compiles cleanly, and has been verified ag
 | **Configuration** | `src/config.ts`, `.env.example` | Done |
 | **Bookaway API Client** | `src/bookaway/client.ts`, `src/bookaway/types.ts` | Done — login, fetch bookings, fetch details, claim/release, approve. Auto token refresh on 401. |
 | **OceanJet Data Mapper** | `src/operators/oceanjet/mapper.ts`, `src/operators/oceanjet/config.ts` | Done — station codes (7 confirmed from live API + 12 from reference sheet), accommodation codes, connecting route detection (6 routes), passenger extraction from extraInfos. |
-| **Booking Processor** | `src/orchestrator/processor.ts` | Done — handles all 4 booking types, departure window validation, approval with 3x retry, structured error code routing (13 error codes: 9 booking-level → release + continue, 4 system-level → release + stop). |
+| **Booking Processor** | `src/orchestrator/processor.ts` | Done — handles all 4 booking types, status re-check after fetch (skips non-pending), departure window validation, approval with 3x retry, structured error code routing (14 error codes: 10 booking-level → release + continue, 4 system-level → release + stop). |
 | **Orchestrator Loop** | `src/orchestrator/loop.ts`, `src/index.ts` | Done — continuous polling, claim-before-process, in-memory duplicate detection, graceful shutdown on SIGINT/SIGTERM. |
 | **Slack Notifications** | `src/notifications/slack.ts` | Done — booking failure, system failure, partial failure, session expired alerts. |
 | **Mock Operator** | `src/operators/mock/operator.ts` | Done — returns sequential fake ticket numbers for end-to-end testing without PRIME. |
@@ -32,8 +32,8 @@ The full orchestrator is implemented, compiles cleanly, and has been verified ag
 | `tests/time.test.ts` | 9 | Time conversion: noon, midnight, AM, PM, edge cases |
 | `tests/config.test.ts` | 21 | Station codes (including real API city names), accommodation codes, connecting routes |
 | `tests/mapper.test.ts` | 9 | All booking types, multi-passenger, real API city names, error cases |
-| `tests/processor.test.ts` | 6 | Success flow, booking-level failure (TRIP_SOLD_OUT), system-level RPA error (PRIME_CRASH), UNKNOWN_ERROR fallback, thrown system error, departure window skip |
-| **Total** | **45** | All passing |
+| `tests/processor.test.ts` | 7 | Success flow, booking-level failure (TRIP_SOLD_OUT), system-level RPA error (PRIME_CRASH), UNKNOWN_ERROR fallback, thrown system error, departure window skip, non-pending status skip |
+| **Total** | **46** | All passing |
 
 #### Documentation
 
@@ -90,17 +90,26 @@ Several fields in the original API documentation were incorrect. The corrected p
 
 Validated via E2E staging test. Key finding: `approvalInputs` does **not** include an `_id` field — including it causes a 500 "Cast to ObjectId" error. The correct payload only contains `bookingCode`, `departureTrip`, and `returnTrip`. Code and docs updated accordingly.
 
-### 2. Build the Python RPA Agent (Blocked — needs Windows VM)
+### 2. ~~Build the Python RPA Agent~~ — Phase 1 Done (March 19, 2026)
 
-The orchestrator is ready to call the RPA agent via HTTP POST to `/issue-tickets`. The RPA agent needs to:
+The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Phase 1 = form fill only (no Issue button click).
 
-- Run on a Windows VM with OceanJet PRIME installed
-- Accept translated booking data via HTTP
-- Drive PRIME to issue tickets (navigate, enter data, capture ticket numbers)
-- Return ticket numbers (or structured error codes) back to the orchestrator
-- Classify every failure using the `TicketErrorCode` enum (defined in `src/operators/types.ts`): `STATION_NOT_FOUND`, `TRIP_NOT_FOUND`, `TRIP_SOLD_OUT`, `VOYAGE_TIME_MISMATCH`, `ACCOMMODATION_UNAVAILABLE`, `PASSENGER_VALIDATION_ERROR`, `DUPLICATE_PASSENGER`, `DATE_BLACKOUT`, `PRIME_VALIDATION_ERROR`, `PRIME_TIMEOUT`, `PRIME_CRASH`, `SESSION_EXPIRED`, `RPA_INTERNAL_ERROR`, or `UNKNOWN_ERROR`
+**What's working:**
+- Connects to PRIME via pywinauto UIA backend
+- Fills Trip Details: trip type, date, origin, destination, voyage selection, accommodation
+- Fills Personal Details: first name, last name, age, gender, contact info
+- Voyage selection via PIL ImageGrab screenshot → Gemini Flash vision API
+- Handles all 4 booking types (one-way, round-trip, connecting-one-way, connecting-round-trip)
+- Error detection: `STATION_NOT_FOUND`, `TRIP_NOT_FOUND`, `VOYAGE_TIME_MISMATCH`, `ACCOMMODATION_UNAVAILABLE`, `PRIME_TIMEOUT`, `PRIME_CRASH`, `RPA_INTERNAL_ERROR`
+- One-click VM deployment via `setup.ps1`
+- FastAPI HTTP server with bearer token auth
 
-Technology: Python with pywinauto or similar RPA library.
+**Tested on VM:**
+- `STATION_NOT_FOUND` — passed (invalid station code + recovery)
+- `TRIP_NOT_FOUND` — passed (past date empty grid + recovery)
+- Happy-path form fill (CEB→TAG one-way) — passed
+
+**Not yet implemented:** Issue button click, ticket number capture, remaining error codes (Phase 2).
 
 ### 3. End-to-End Test with Mock Operator
 

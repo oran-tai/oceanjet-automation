@@ -81,7 +81,16 @@ export async function processBooking(
     // 1. Fetch full details
     const booking = await client.fetchBookingDetails(bookingId);
 
-    // 2. Validate departure window
+    // 2. Verify booking is still pending
+    if (booking.status !== 'pending') {
+      logger.info('Booking no longer pending, skipping', {
+        reference,
+        status: booking.status,
+      });
+      return { status: 'skipped', reason: `Booking status is '${booking.status}', not pending` };
+    }
+
+    // 3. Validate departure window
     if (!isDepartureWithinWindow(booking.misc.departureDate)) {
       logger.info('Booking departure too far out, skipping', {
         reference,
@@ -90,7 +99,7 @@ export async function processBooking(
       return { status: 'skipped', reason: 'Departure date beyond 1-month window' };
     }
 
-    // 3. Translate
+    // 4. Translate
     const translated = mapBookingToOceanJet(booking);
     logger.info('Booking translated', {
       reference,
@@ -100,10 +109,10 @@ export async function processBooking(
       passengerCount: translated.passengers.length,
     });
 
-    // 4. Issue tickets via operator
+    // 5. Issue tickets via operator
     const ticketResult = await operator.issueTickets(translated);
 
-    // 5. Handle result
+    // 6. Handle result
     if (!ticketResult.success) {
       const errorCode = ticketResult.errorCode || 'UNKNOWN_ERROR';
       const errorLabel = TICKET_ERROR_LABELS[errorCode];
@@ -168,7 +177,7 @@ export async function processBooking(
       };
     }
 
-    // 6. Approve on Bookaway
+    // 7. Approve on Bookaway
     const approval = buildApprovalPayload(
       ticketResult.departureTickets,
       ticketResult.returnTickets

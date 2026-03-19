@@ -28,15 +28,24 @@ The RPA agent is a lightweight Python HTTP service that runs on a Windows VM alo
 ## Project Structure
 
 ```
-oceanjet-rpa-agent/
+rpa-agent/
 ├── agent/
+│   ├── __init__.py
 │   ├── server.py          # FastAPI HTTP server (POST /issue-tickets, GET /health)
-│   ├── prime_driver.py    # pywinauto logic — navigates PRIME, issues tickets
-│   ├── error_codes.py     # Maps PRIME UI states to TicketErrorCode enum
-│   └── config.py          # Port, auth token, timeouts, PRIME window title
-├── requirements.txt       # pywinauto, fastapi, uvicorn
-├── install.bat            # One-click: installs Python dependencies
-├── start.bat              # One-click: starts the HTTP server
+│   ├── prime_driver.py    # pywinauto logic — connects to PRIME, fills forms, selects voyages
+│   ├── error_codes.py     # TicketErrorCode enum + PrimeError exception
+│   ├── date_utils.py      # Bookaway→PRIME date conversion, departure time matching
+│   └── config.py          # Port, auth token, timeouts, PRIME window title, Gemini API key
+├── tests/
+│   ├── test_date_utils.py           # Unit tests (pytest-safe, no pywinauto)
+│   ├── test_error_station_not_found.py  # Standalone PRIME integration test
+│   └── test_error_trip_not_found.py     # Standalone PRIME integration test
+├── test_fill_form.py      # Standalone happy-path test (one-way, round-trip, connecting)
+├── requirements.txt       # pywinauto, google-genai, fastapi, uvicorn, Pillow
+├── setup.ps1              # One-click PowerShell installer for VMs
+├── install.bat            # Installs Python dependencies
+├── start.bat              # Starts the HTTP server
+├── .env.example
 └── README.md              # Setup instructions for new VMs
 ```
 
@@ -202,19 +211,38 @@ Discovered via Accessibility Insights inspection on March 18-19, 2026. Full deta
 |---|---|
 | Window title | `Prime Software - OCEAN FAST FERRIES CORPORATION Build 20231109E` |
 | UI framework | **Delphi VCL** (class names: `TDBGrid`, `TButton`, `TPanel`, `TEdit`, etc.) |
-| pywinauto backends | `win32` for Delphi class names, `uia` for control tree / pane names |
-| Grid reading | Screenshot → Claude API (vision) — TDBGrid doesn't expose cell data |
+| pywinauto backend | `uia` for all interactions (win32 fails with 64-bit Python on 32-bit PRIME) |
+| Grid reading | PIL ImageGrab screenshot → Gemini Flash (vision) — TDBGrid doesn't expose cell data |
 | Control identification | Parent pane name + child index (leaf controls have no `Name` property) |
 
 ## Dependencies (Python, on the VM)
 
 ```
 pywinauto          # UI automation
-Pillow             # Screenshot capture (grid.capture_as_image())
-anthropic          # Claude API for grid screenshot reading
+Pillow             # Screenshot capture (PIL ImageGrab)
+google-genai       # Gemini Flash API for voyage grid reading
 fastapi            # HTTP server
 uvicorn            # ASGI server
+python-dotenv      # Environment variable loading
 ```
+
+## Orchestrator Processing Flow
+
+For each poll cycle, the orchestrator:
+
+1. Fetches up to 50 pending bookings from Bookaway (sorted by departure date)
+2. Filters out already-claimed and already-processed bookings
+3. For each unclaimed booking:
+   a. Claims it on Bookaway
+   b. Fetches full booking details
+   c. **Verifies booking is still `pending`** — skips if status changed (e.g., manually approved)
+   d. Validates departure is within PRIME's 1-month booking window
+   e. Translates to OceanJet PRIME format
+   f. Sends to RPA agent via POST `/issue-tickets`
+   g. On success: approves on Bookaway (with 3x retry)
+   h. On booking-level error: releases booking, sends Slack alert, continues to next
+   i. On system-level error: releases booking, sends Slack alert, **stops the loop**
+4. Waits `pollingIntervalMs`, then repeats
 
 ## Open Questions
 
