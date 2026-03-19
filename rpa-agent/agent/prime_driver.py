@@ -124,12 +124,24 @@ class PrimeDriver:
         # 3. Select origin (combo_box[2])
         combos = trip_details.children(control_type="ComboBox")
         origin_combo = combos[2]
-        origin_combo.select(leg["origin"])
+        try:
+            origin_combo.select(leg["origin"])
+        except Exception:
+            raise PrimeError(
+                TicketErrorCode.STATION_NOT_FOUND,
+                f"Origin station '{leg['origin']}' not found in PRIME dropdown",
+            )
         time.sleep(0.3)
 
         # 4. Select destination (combo_box[1])
         dest_combo = combos[1]
-        dest_combo.select(leg["destination"])
+        try:
+            dest_combo.select(leg["destination"])
+        except Exception:
+            raise PrimeError(
+                TicketErrorCode.STATION_NOT_FOUND,
+                f"Destination station '{leg['destination']}' not found in PRIME dropdown",
+            )
         time.sleep(0.3)
 
         # 5. Click voyage search button (button[1])
@@ -145,7 +157,13 @@ class PrimeDriver:
 
         # 7. Select accommodation (combo_box[0])
         accom_combo = combos[0]
-        accom_combo.select(leg["accommodation"])
+        try:
+            accom_combo.select(leg["accommodation"])
+        except Exception:
+            raise PrimeError(
+                TicketErrorCode.ACCOMMODATION_UNAVAILABLE,
+                f"Accommodation '{leg['accommodation']}' not found in PRIME dropdown",
+            )
         time.sleep(0.3)
 
         # 8. If round-trip, fill return details
