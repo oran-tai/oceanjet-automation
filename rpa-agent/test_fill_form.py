@@ -117,8 +117,16 @@ def debug_controls():
         title=PRIME_WINDOW_TITLE, timeout=PRIME_TIMEOUT_SEC
     )
     win = app.window(title=PRIME_WINDOW_TITLE)
-    logger.info("Dumping control tree (depth=4)...")
-    win.print_control_identifiers(depth=4)
+    # Find the ISSUE NEW TICKET pane and dump its children
+    logger.info("Looking for ISSUE NEW TICKET pane...")
+    try:
+        issue_pane = win.child_window(title="ISSUE NEW TICKET", control_type="Pane")
+        logger.info("Found ISSUE NEW TICKET pane, dumping its children (depth=5)...")
+        issue_pane.print_control_identifiers(depth=5)
+    except Exception as e:
+        logger.error(f"Could not find ISSUE NEW TICKET pane: {e}")
+        logger.info("Dumping full window tree (depth=6)...")
+        win.print_control_identifiers(depth=6)
 
 
 def main():
