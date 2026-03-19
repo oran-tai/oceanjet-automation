@@ -201,7 +201,10 @@ Reading remaining seat capacity from PRIME to update availability on Bookaway an
 #### 5.14 Multi-Operator Expansion
 Adding new operators by creating a new data mapping config and operator interaction module per operator. The orchestrator and Bookaway integration remain unchanged. Each operator's interaction module can use whichever method suits their system — RPA for desktop apps, browser automation for web portals, or direct API calls where available.
 
-#### 5.15 AI Desktop Agent Upgrade Path
+#### 5.15 Events Table & Analytics Pipeline
+Publish structured events (booking received, ticket issued, error occurred, booking approved, etc.) to a BigQuery events table via Kafka or a similar streaming mechanism. This enables full observability — tracking processing times, error rates by type, volume trends, and per-route success rates. The events table would also serve as the source of truth for dashboards and operational reporting.
+
+#### 5.16 AI Desktop Agent Upgrade Path
 If PRIME undergoes a significant UI redesign that breaks RPA selectors, the modular PRIME interaction layer can be swapped to an AI desktop agent (e.g., Claude Computer Use API, OpenClaw) that reads the screen semantically and adapts to UI changes without reprogramming. This could also handle unexpected error dialogs or novel screen states that selector-based RPA cannot anticipate.
 
 ---

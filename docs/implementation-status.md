@@ -146,6 +146,7 @@ The `tests/api-*.ts` scripts were used during development to explore the live AP
 
 ### 5. Deferred Items (from original plan)
 
+- **Events table → BigQuery** — Publish structured events (booking received, ticket issued, error, approval) to BQ via Kafka or similar. Enables dashboards, error rate tracking, volume trends, per-route analytics. See PRD §5.15.
 - **Dashboard/logs UI** — P1 nice-to-have
 - **Multi-bot parallelism** — P1 nice-to-have
 - **Automated cancellations** — P2
