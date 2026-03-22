@@ -35,6 +35,10 @@ export async function startOrchestrator(
 
       // Filter: skip already claimed and already processed
       const unclaimed = bookings.filter((b) => {
+        // If targeting a specific booking, skip everything else
+        if (config.targetBooking && b.reference !== config.targetBooking) {
+          return false;
+        }
         if (b.inProgressBy) {
           logger.debug('Skipping claimed booking', {
             reference: b.reference,
@@ -70,6 +74,13 @@ export async function startOrchestrator(
 
           // Track as processed (regardless of result)
           processedBookingIds.add(booking._id);
+
+          // If targeting a specific booking, stop after processing it
+          if (config.targetBooking) {
+            logger.info('Target booking processed, stopping', { reference: booking.reference });
+            running = false;
+            break;
+          }
 
           // If system error, stop the loop
           if (result.status === 'system-error') {

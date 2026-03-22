@@ -47,4 +47,5 @@ export const config = {
     authToken: process.env.RPA_AUTH_TOKEN || '',
   },
   operatorMode: (process.env.OPERATOR_MODE || 'mock') as 'mock' | 'rpa',
+  targetBooking: (process.env.TARGET_BOOKING || '').trim(),
 } as const;
