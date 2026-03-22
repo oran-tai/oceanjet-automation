@@ -475,17 +475,23 @@ class PrimeDriver:
         except Exception:
             # Fallback: press Enter (Yes is typically focused)
             send_keys("{ENTER}")
-        time.sleep(2)
+
+        # Wait for PRIME to process the ticket — this can take a few seconds
+        time.sleep(3)
 
         # Now wait for the result dialog — success or error
+        # The success dialog has "Process Complete" text inside it.
+        # We need to read the text BEFORE clicking OK.
         result_dlg = None
-        for _ in range(PRIME_TIMEOUT_SEC * 2):
+        for attempt in range(PRIME_TIMEOUT_SEC * 2):
             try:
                 windows = desktop.windows(title_re="OCEAN FAST FERRIES.*")
                 for w in windows:
                     rect = w.rectangle()
                     width = rect.right - rect.left
                     if width < 700:
+                        # Found a small dialog — read its text to confirm
+                        # it's a result dialog (not the main window)
                         result_dlg = w
                         break
                 if result_dlg:
@@ -500,16 +506,11 @@ class PrimeDriver:
                 "No result dialog appeared after confirming Issue",
             )
 
-        # Read the dialog text
-        try:
-            # Get all static text controls (labels) in the dialog
-            texts = result_dlg.children(control_type="Text")
-            dialog_text = " ".join(t.window_text() for t in texts if t.window_text())
-            if not dialog_text:
-                dialog_text = result_dlg.window_text()
-        except Exception:
-            dialog_text = result_dlg.window_text()
+        # Wait a moment for the dialog to fully render its text
+        time.sleep(1)
 
+        # Read the dialog text — try multiple approaches
+        dialog_text = self._read_dialog_text(result_dlg)
         logger.info(f"Result dialog text: {dialog_text}")
 
         if "Process Complete" in dialog_text or "Ticket number" in dialog_text:
@@ -517,23 +518,128 @@ class PrimeDriver:
             ticket_numbers = re.findall(r"\[(\d+)\]", dialog_text)
             logger.info(f"Ticket number(s) captured: {ticket_numbers}")
 
-            # Click OK to close
+            # Click OK to close the success dialog
             try:
                 ok_btn = result_dlg.child_window(title="OK", control_type="Button")
                 ok_btn.click_input()
             except Exception:
                 send_keys("{ENTER}")
-            time.sleep(0.5)
+            time.sleep(1)
+
+            # Close the print preview that opens after ticket issuance
+            self._close_print_preview(desktop)
 
             if not ticket_numbers:
                 raise PrimeError(
                     TicketErrorCode.RPA_INTERNAL_ERROR,
-                    f"Success dialog appeared but no ticket number found in: {dialog_text}",
+                    f"CRITICAL: Ticket was issued but number could not be captured from: {dialog_text}",
                 )
 
             return ticket_numbers
         else:
-            return self._handle_error_dialog(result_dlg)
+            # CRITICAL: We already clicked Yes on the Confirm dialog,
+            # so a ticket was likely issued. If we can't read the success
+            # message, we must treat this as a system error — retrying
+            # would issue a duplicate ticket.
+            logger.error(
+                f"CRITICAL: Ticket may have been issued but could not read "
+                f"success dialog. Text found: {dialog_text}"
+            )
+
+            # Close the dialog
+            try:
+                ok_btn = result_dlg.child_window(title="OK", control_type="Button")
+                ok_btn.click_input()
+            except Exception:
+                send_keys("{ENTER}")
+            time.sleep(1)
+
+            # Close print preview if it appeared
+            self._close_print_preview(desktop)
+
+            raise PrimeError(
+                TicketErrorCode.RPA_INTERNAL_ERROR,
+                f"CRITICAL: Ticket likely issued but number not captured. "
+                f"Dialog text: {dialog_text}. Manual intervention required.",
+            )
+
+    def _read_dialog_text(self, dialog) -> str:
+        """Read text from a PRIME dialog using multiple strategies."""
+        # Strategy 1: Read all Text/Static controls (most reliable for Delphi)
+        try:
+            texts = dialog.children(control_type="Text")
+            text = " ".join(t.window_text() for t in texts if t.window_text())
+            if text and text != dialog.window_text():
+                return text
+        except Exception:
+            pass
+
+        # Strategy 2: Look for Static controls (win32 class name)
+        try:
+            statics = dialog.children(class_name="TLabel")
+            text = " ".join(s.window_text() for s in statics if s.window_text())
+            if text:
+                return text
+        except Exception:
+            pass
+
+        # Strategy 3: Get all descendant texts
+        try:
+            all_children = dialog.descendants()
+            texts = []
+            for child in all_children:
+                try:
+                    t = child.window_text()
+                    if t and t != dialog.window_text() and t not in ("OK", "Yes", "No"):
+                        texts.append(t)
+                except Exception:
+                    pass
+            if texts:
+                return " ".join(texts)
+        except Exception:
+            pass
+
+        # Fallback: window title (least useful)
+        return dialog.window_text()
+
+    def _close_print_preview(self, desktop):
+        """Close the print preview window that appears after issuing a ticket."""
+        time.sleep(3)
+        try:
+            # Try common print preview window titles
+            for title_pattern in ["Print Preview", "Preview", "Report"]:
+                try:
+                    preview = desktop.window(title_re=f".*{title_pattern}.*")
+                    if preview.exists(timeout=3):
+                        logger.info(f"Closing print preview: {preview.window_text()}")
+                        preview.close()
+                        time.sleep(0.5)
+                        return
+                except Exception:
+                    continue
+
+            # Fallback: look for any new window that isn't PRIME main or known dialogs
+            windows = desktop.windows()
+            for w in windows:
+                try:
+                    title = w.window_text()
+                    if (title and
+                        "OCEAN FAST FERRIES" not in title and
+                        title not in ("", "Confirm", "Program Manager") and
+                        "Start" not in title):
+                        rect = w.rectangle()
+                        width = rect.right - rect.left
+                        if width > 400:  # Print preview is likely a sizeable window
+                            logger.info(f"Closing unexpected window: {title}")
+                            w.close()
+                            time.sleep(0.5)
+                            return
+                except Exception:
+                    continue
+
+            logger.info("No print preview window found to close")
+        except Exception as e:
+            logger.warning(f"Failed to close print preview: {e}")
 
     def _handle_error_dialog(self, error_dlg) -> list[str]:
         """Handle a PRIME validation error dialog. Always raises PrimeError."""
