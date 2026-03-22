@@ -66,6 +66,7 @@ export interface TranslatedBooking {
   reference: string;
   bookingType: BookingType;
   passengers: PassengerData[];
+  contactInfo?: string;
   departureLeg: LegData;
   returnLeg?: LegData;
   // For connecting routes: the two legs that make up the departure

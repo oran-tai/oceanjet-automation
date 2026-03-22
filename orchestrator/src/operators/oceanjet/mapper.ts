@@ -119,6 +119,7 @@ export function mapBookingToOceanJet(booking: BookingDetail): TranslatedBooking 
     reference: booking.reference,
     bookingType,
     passengers,
+    contactInfo: item.passengers[0]?.contact?.email || '',
     departureLeg: {
       origin: originCode,
       destination: destinationCode,

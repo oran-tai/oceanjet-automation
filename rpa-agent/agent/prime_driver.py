@@ -698,12 +698,13 @@ class PrimeDriver:
                     logger.error("System-level error, stopping booking")
                     break
 
-                # Booking-level errors: reset and continue to next task
+                # Booking-level errors: stop processing — if the data is wrong
+                # for one passenger, it'll be wrong for all of them
                 try:
                     self.click_refresh()
                 except Exception:
                     pass
-                continue
+                break
 
         partial_results = list(pax_results.values())
         any_success = any(r["success"] for r in partial_results)

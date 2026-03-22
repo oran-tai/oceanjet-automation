@@ -83,6 +83,10 @@ export interface Passenger {
   lastName: string;
   _id: string;
   extraInfos?: ExtraInfo[];
+  contact?: {
+    phone: string;
+    email: string;
+  };
 }
 
 export interface ExtraInfo {
