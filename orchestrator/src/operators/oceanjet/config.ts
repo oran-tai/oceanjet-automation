@@ -28,6 +28,7 @@ export const STATION_CODES: Record<string, string> = {
   'larena': 'SIQ',
   'larena, siquijor': 'SIQ',
   'ormoc': 'ORM',
+  'ormoc, leyte': 'ORM',
   'plaridel': 'PLA',
   'tubigon': 'TUB',
   'maasin': 'MAA',
