@@ -506,11 +506,12 @@ class PrimeDriver:
                 "No result dialog appeared after confirming Issue",
             )
 
-        # Wait a moment for the dialog to fully render its text
+        # Wait for the dialog to fully render
         time.sleep(1)
 
-        # Read the dialog text — try multiple approaches
-        dialog_text = self._read_dialog_text(result_dlg)
+        # Screenshot the dialog and send to Gemini to read the text
+        # (Delphi paints the message directly — not accessible via UIA)
+        dialog_text = self._read_dialog_via_screenshot(result_dlg)
         logger.info(f"Result dialog text: {dialog_text}")
 
         if "Process Complete" in dialog_text or "Ticket number" in dialog_text:
@@ -563,43 +564,47 @@ class PrimeDriver:
                 f"Dialog text: {dialog_text}. Manual intervention required.",
             )
 
-    def _read_dialog_text(self, dialog) -> str:
-        """Read text from a PRIME dialog using multiple strategies."""
-        # Strategy 1: Read all Text/Static controls (most reliable for Delphi)
-        try:
-            texts = dialog.children(control_type="Text")
-            text = " ".join(t.window_text() for t in texts if t.window_text())
-            if text and text != dialog.window_text():
-                return text
-        except Exception:
-            pass
+    def _read_dialog_via_screenshot(self, dialog) -> str:
+        """Read text from a PRIME dialog by screenshotting it and sending to Gemini.
 
-        # Strategy 2: Look for Static controls (win32 class name)
+        Delphi dialogs paint their message text directly on the window surface
+        rather than using accessible label controls, so we need OCR via Gemini.
+        """
+        from PIL import ImageGrab
+
         try:
-            statics = dialog.children(class_name="TLabel")
-            text = " ".join(s.window_text() for s in statics if s.window_text())
+            rect = dialog.rectangle()
+            screenshot = ImageGrab.grab(bbox=(
+                rect.left, rect.top, rect.right, rect.bottom
+            ))
+        except Exception as e:
+            logger.error(f"Failed to capture dialog screenshot: {e}")
+            return dialog.window_text()
+
+        prompt = (
+            "This is a screenshot of a dialog box from a ferry ticketing system. "
+            "Read ALL the text shown in the dialog and return it exactly as written. "
+            "Include the full message text. Return ONLY the text content, nothing else."
+        )
+
+        img_buffer = io.BytesIO()
+        screenshot.save(img_buffer, format="PNG")
+        image_bytes = img_buffer.getvalue()
+
+        try:
+            response = self.gemini_client.models.generate_content(
+                model="gemini-flash-latest",
+                contents=[
+                    prompt,
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+                ],
+            )
+            text = response.text.strip()
             if text:
                 return text
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Gemini Vision API call failed for dialog: {e}")
 
-        # Strategy 3: Get all descendant texts
-        try:
-            all_children = dialog.descendants()
-            texts = []
-            for child in all_children:
-                try:
-                    t = child.window_text()
-                    if t and t != dialog.window_text() and t not in ("OK", "Yes", "No"):
-                        texts.append(t)
-                except Exception:
-                    pass
-            if texts:
-                return " ".join(texts)
-        except Exception:
-            pass
-
-        # Fallback: window title (least useful)
         return dialog.window_text()
 
     def _close_print_preview(self, desktop):
@@ -643,13 +648,7 @@ class PrimeDriver:
 
     def _handle_error_dialog(self, error_dlg) -> list[str]:
         """Handle a PRIME validation error dialog. Always raises PrimeError."""
-        try:
-            texts = error_dlg.children(control_type="Text")
-            error_text = " ".join(t.window_text() for t in texts if t.window_text())
-            if not error_text:
-                error_text = error_dlg.window_text()
-        except Exception:
-            error_text = "Unknown PRIME error"
+        error_text = self._read_dialog_via_screenshot(error_dlg)
 
         logger.error(f"PRIME validation error: {error_text}")
 
