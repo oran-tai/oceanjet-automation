@@ -81,7 +81,7 @@ export class BookawayClient {
           customerStatus: 'pending',
           payment: 'paid;authorized',
           sort: 'departureDate:1',
-          limit: 50,
+          limit: 200,
           disableCount: true,
           domain: 'all',
           date: 'created',
