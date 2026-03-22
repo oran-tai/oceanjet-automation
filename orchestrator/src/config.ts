@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 function required(key: string): string {
-  const value = process.env[key];
+  const value = process.env[key]?.trim();
   if (!value) {
     throw new Error(`Missing required environment variable: ${key}`);
   }
@@ -11,7 +11,7 @@ function required(key: string): string {
 }
 
 function resolveBookawayUrls(): { apiUrl: string; origin: string } {
-  const env = (process.env.BOOKAWAY_ENV || 'stage').toLowerCase();
+  const env = (process.env.BOOKAWAY_ENV || 'stage').trim().toLowerCase();
   if (env === 'prod') {
     return {
       apiUrl: required('BOOKAWAY_API_URL_PROD'),
@@ -28,7 +28,7 @@ const bookawayUrls = resolveBookawayUrls();
 
 export const config = {
   bookaway: {
-    env: (process.env.BOOKAWAY_ENV || 'stage').toLowerCase() as 'prod' | 'stage',
+    env: (process.env.BOOKAWAY_ENV || 'stage').trim().toLowerCase() as 'prod' | 'stage',
     apiUrl: bookawayUrls.apiUrl,
     origin: bookawayUrls.origin,
     username: required('BOOKAWAY_USERNAME'),
