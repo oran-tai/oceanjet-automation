@@ -1,6 +1,6 @@
 # OceanJet Automation — Implementation Status
 
-**Last updated:** March 19, 2026
+**Last updated:** March 22, 2026
 
 ---
 
@@ -14,16 +14,16 @@ The full orchestrator is implemented, compiles cleanly, and has been verified ag
 
 | Component | File(s) | Status |
 | --- | --- | --- |
-| **Configuration** | `src/config.ts`, `.env.example` | Done |
-| **Bookaway API Client** | `src/bookaway/client.ts`, `src/bookaway/types.ts` | Done — login, fetch bookings, fetch details, claim/release, approve. Auto token refresh on 401. |
-| **OceanJet Data Mapper** | `src/operators/oceanjet/mapper.ts`, `src/operators/oceanjet/config.ts` | Done — station codes (7 confirmed from live API + 12 from reference sheet), accommodation codes, connecting route detection (6 routes), passenger extraction from extraInfos. |
-| **Booking Processor** | `src/orchestrator/processor.ts` | Done — handles all 4 booking types, status re-check after fetch (skips non-pending), passenger validation (pre-PRIME), departure window validation, conditional TRIP_NOT_FOUND alerting (≤7 days only), approval with 3x retry, structured error code routing (12 error codes: 8 booking-level → release + continue, 4 system-level → release + stop). |
-| **Orchestrator Loop** | `src/orchestrator/loop.ts`, `src/index.ts` | Done — continuous polling, claim-before-process, in-memory duplicate detection, graceful shutdown on SIGINT/SIGTERM. |
-| **Slack Notifications** | `src/notifications/slack.ts` | Done — booking failure, system failure, partial failure, session expired alerts. |
-| **Mock Operator** | `src/operators/mock/operator.ts` | Done — returns sequential fake ticket numbers for end-to-end testing without PRIME. |
-| **RPA Client** | `src/operators/oceanjet/rpa-client.ts` | Done — HTTP client stub ready for the Python RPA agent. |
-| **Logging** | `src/utils/logger.ts` | Done — structured JSON logging with Bearer token redaction. |
-| **Time Utility** | `src/utils/time.ts` | Done — 24h → 12h conversion (e.g., "15:20" → "3:20 PM"). |
+| **Configuration** | `orchestrator/src/config.ts`, `.env.example` | Done — TARGET_BOOKING support, env var trimming for Windows compatibility |
+| **Bookaway API Client** | `orchestrator/src/bookaway/client.ts`, `types.ts` | Done — login, fetch bookings (limit 500), fetch details, claim/release, approve. Auto token refresh on 401. |
+| **OceanJet Data Mapper** | `orchestrator/src/operators/oceanjet/mapper.ts`, `config.ts` | Done — station codes (8 confirmed from live API + 12 from reference sheet), accommodation codes, connecting route detection (6 routes), passenger extraction from extraInfos, contactInfo from first passenger. |
+| **Booking Processor** | `orchestrator/src/orchestrator/processor.ts` | Done — handles all 4 booking types, status re-check after fetch (skips non-pending), passenger validation (pre-PRIME), departure window validation, conditional TRIP_NOT_FOUND alerting (≤7 days only), approval with 3x retry, structured error code routing (12 error codes: 8 booking-level → release + continue, 4 system-level → release + stop). |
+| **Orchestrator Loop** | `orchestrator/src/orchestrator/loop.ts`, `src/index.ts` | Done — continuous polling, claim-before-process, TARGET_BOOKING filter, in-memory duplicate detection, graceful shutdown on SIGINT/SIGTERM. |
+| **Slack Notifications** | `orchestrator/src/notifications/slack.ts` | Done — booking failure, system failure, partial failure, session expired alerts. |
+| **Mock Operator** | `orchestrator/src/operators/mock/operator.ts` | Done — returns sequential fake ticket numbers for end-to-end testing without PRIME. |
+| **RPA Client** | `orchestrator/src/operators/oceanjet/rpa-client.ts` | Done — HTTP client for the Python RPA agent. |
+| **Logging** | `orchestrator/src/utils/logger.ts` | Done — structured JSON logging with Bearer token redaction. |
+| **Time Utility** | `orchestrator/src/utils/time.ts` | Done — 24h → 12h conversion (e.g., "15:20" → "3:20 PM"). |
 
 #### Tests
 
@@ -90,65 +90,80 @@ Several fields in the original API documentation were incorrect. The corrected p
 
 Validated via E2E staging test. Key finding: `approvalInputs` does **not** include an `_id` field — including it causes a 500 "Cast to ObjectId" error. The correct payload only contains `bookingCode`, `departureTrip`, and `returnTrip`. Code and docs updated accordingly.
 
-### 2. ~~Build the Python RPA Agent~~ — Phase 1 Done (March 19, 2026)
+### 2. ~~Build the Python RPA Agent~~ — Phase 2 Done (March 22, 2026)
 
-The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Phase 1 = form fill only (no Issue button click).
+The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Full end-to-end automation is working: form fill → Issue ticket → capture ticket number → close print preview.
+
+**First successful fully automated booking:** BW4946194 (TAG→SIQ, 2 passengers, Tourist class) — tickets 13003466, 13003467 issued and approved on Bookaway. ~90 seconds for 2 passengers.
 
 **What's working:**
 - Connects to PRIME via pywinauto UIA backend
 - Fills Trip Details: trip type, date, origin, destination, voyage selection, accommodation
-- Fills Personal Details: first name, last name, age, gender, contact info
+- Fills Personal Details: first name, last name, age, gender, contact info (email from first passenger)
 - Voyage selection via PIL ImageGrab screenshot → Gemini Flash vision API
+- Issue button click → Confirm dialog (Yes) → success dialog capture → ticket number extraction
+- Dialog text reading via Gemini Vision screenshot (Delphi paints text directly, not accessible via UIA)
+- Print preview auto-close after each ticket issuance
 - Handles all 4 booking types (one-way, round-trip, connecting-one-way, connecting-round-trip)
-- Error detection: `STATION_NOT_FOUND`, `TRIP_NOT_FOUND`, `VOYAGE_TIME_MISMATCH`, `ACCOMMODATION_UNAVAILABLE`, `PRIME_TIMEOUT`, `PRIME_CRASH`, `RPA_INTERNAL_ERROR`
-- Passenger validation in orchestrator (pre-PRIME): `PASSENGER_VALIDATION_ERROR`
-- Slack notifications from RPA agent (configurable via `SLACK_WEBHOOK_URL`)
-- One-click VM deployment via `setup.ps1` + `update-rpa` command
+- Error detection: all 12 error codes implemented
+- Critical safety: failed ticket capture after Confirm → RPA_INTERNAL_ERROR (system-level stop)
+- All errors (booking + system) stop processing remaining passengers
+- TARGET_BOOKING mode: process a single booking by reference, then stop
+- Slack notifications for all failure types
+- Both services run on same VM (localhost:8080)
+- One-click VM deployment via `setup.ps1` + `update-oceanjet` command
 - FastAPI HTTP server with bearer token auth
 
 **Error Code Status (12 total):**
 
 | Error Code | Type | Implemented? | Tested? | Slack Alert? | How it's triggered | Orchestrator behavior |
 |---|---|---|---|---|---|---|
-| `STATION_NOT_FOUND` | Booking | Yes | **VM passed** | Always | Origin/destination not in PRIME dropdown | Skip booking, continue loop |
-| `TRIP_NOT_FOUND` | Booking | Yes | **VM passed** | Only if departure ≤ 7 days | Voyage Schedule grid is empty | Skip booking, continue loop |
-| `VOYAGE_TIME_MISMATCH` | Booking | Yes | **VM passed** | Always | No voyage matches departure time | Skip booking, continue loop |
-| `ACCOMMODATION_UNAVAILABLE` | Booking | Yes | **VM passed** | Always | Accommodation code not in dropdown | Skip booking, continue loop |
-| `PASSENGER_VALIDATION_ERROR` | Booking | Yes | **Unit test** | Always | Missing/invalid name, age, or gender | Skip booking, continue loop (pre-PRIME) |
-| `TRIP_SOLD_OUT` | Booking | No | — | Always | Voyage exists but no seats available | Skip booking, continue loop |
-| `PRIME_VALIDATION_ERROR` | Booking | No | — | Always | PRIME rejects form on Issue click (Phase 2) | Skip booking, continue loop |
+| `STATION_NOT_FOUND` | Booking | Yes | **VM passed** | Always | Origin/destination not in PRIME dropdown | Release booking, stop loop |
+| `TRIP_NOT_FOUND` | Booking | Yes | **VM passed** | Only if departure ≤ 7 days | Voyage Schedule grid is empty | Release booking, stop loop |
+| `VOYAGE_TIME_MISMATCH` | Booking | Yes | **VM passed** | Always | No voyage matches departure time | Release booking, stop loop |
+| `ACCOMMODATION_UNAVAILABLE` | Booking | Yes | **VM passed** | Always | Accommodation code not in dropdown | Release booking, stop loop |
+| `PASSENGER_VALIDATION_ERROR` | Booking | Yes | **Unit test** | Always | Missing/invalid name, age, or gender | Release booking, continue loop (pre-PRIME) |
+| `TRIP_SOLD_OUT` | Booking | Yes | — | Always | Voyage exists but no seats available | Release booking, continue loop |
+| `PRIME_VALIDATION_ERROR` | Booking | Yes | — | Always | PRIME rejects form on Issue click | Release booking, stop loop |
 | `PRIME_TIMEOUT` | System | Yes | — | Always | Dialog doesn't appear in time | **Stop loop**, alert operator |
 | `PRIME_CRASH` | System | Yes | — | Always | Can't connect to PRIME process | **Stop loop**, alert operator |
 | `SESSION_EXPIRED` | System | No | — | Always | PRIME login session timed out | **Stop loop**, alert operator |
-| `RPA_INTERNAL_ERROR` | System | Yes | — | Always | Screenshot/API/internal failure | **Stop loop**, alert operator |
-| `UNKNOWN_ERROR` | Catch-all | No | — | Always | Unexpected unhandled exception | **Stop loop**, alert operator |
+| `RPA_INTERNAL_ERROR` | System | Yes | — | Always | Screenshot/API/internal failure, failed ticket capture | **Stop loop**, alert operator |
+| `UNKNOWN_ERROR` | Catch-all | Yes | — | Always | Unexpected unhandled exception | **Stop loop**, alert operator |
 
-**Score:** 8/12 implemented, 5/12 tested (4 VM + 1 unit test).
+**Score:** 11/12 implemented, 5/12 tested (4 VM + 1 unit test).
 
-**Not yet implemented:** Issue button click, ticket number capture, `TRIP_SOLD_OUT`, `PRIME_VALIDATION_ERROR`, `SESSION_EXPIRED` (all Phase 2).
+**Not yet implemented:** `SESSION_EXPIRED` (requires PRIME session timeout detection).
 
-### 3. End-to-End Test with Mock Operator
+### 3. ~~First Production E2E Test~~ — Done (March 22, 2026)
 
-Run `npm run dev` against the real Bookaway API in mock mode to verify the full loop:
+Full end-to-end production test completed:
 
 ```
-Poll → Claim → Translate → Mock Tickets → Approve
+Poll Bookaway → Claim → Translate → RPA fill PRIME form → Issue tickets → Capture ticket numbers → Approve on Bookaway
 ```
 
-**Warning:** This will actually approve real bookings with fake ticket numbers. Should only be done on test bookings or with the approval step disabled.
+Booking BW4946194: TAG→SIQ, one-way, 2 passengers (Mathieu Cloutier, Marika Veilleux), Tourist class. Tickets 13003466 and 13003467 issued and approved successfully.
 
-### 4. Clean Up Exploration Scripts
+### 4. Architecture — Monorepo with Two Microservices
 
-The `tests/api-*.ts` scripts were used during development to explore the live API. They can be:
+Both services run on the same Windows VM:
 
-- Moved to a `scripts/` directory for future use
-- Removed if no longer needed
+```
+C:\oceanjet-automation\
+├── orchestrator\    Node.js — polls Bookaway, translates, approves
+├── rpa-agent\       Python — drives PRIME UI
+└── setup.ps1        One-click VM setup
+```
 
-### 5. Deferred Items (from original plan)
+Communication: orchestrator → HTTP POST localhost:8080/issue-tickets → RPA agent.
 
-- **Events table → BigQuery** — Publish structured events (booking received, ticket issued, error, approval) to BQ via Kafka or similar. Enables dashboards, error rate tracking, volume trends, per-route analytics. See PRD §5.15.
-- **Dashboard/logs UI** — P1 nice-to-have
-- **Multi-bot parallelism** — P1 nice-to-have
+### 5. Remaining Work
+
+- **`SESSION_EXPIRED`** — detect PRIME login session timeout
+- **Round-trip ticket count** — open question: does PRIME return 1 or 2 ticket numbers for round-trip?
+- **Events table → BigQuery** — structured event publishing for dashboards
+- **Multi-booking continuous mode** — remove TARGET_BOOKING, process all pending bookings
 - **Automated cancellations** — P2
 - **Real-time inventory syncing** — P2
 - **Multi-operator expansion** — P2
@@ -157,19 +172,25 @@ The `tests/api-*.ts` scripts were used during development to explore the live AP
 
 ## How to Run
 
+### On the VM (production)
+
+1. Open PRIME and log in to Issue New Ticket screen
+2. Start RPA Agent: `cd C:\oceanjet-automation\rpa-agent && start.bat`
+3. Start Orchestrator: `cd C:\oceanjet-automation\orchestrator && start.bat`
+
+To process a single booking, set `TARGET_BOOKING=BW1234567` in `orchestrator/.env`.
+
+### Development (local)
+
 ```bash
-# Install dependencies
+cd orchestrator
 npm install
-
-# Run tests
-npm test
-
-# Run in development mode (mock operator)
-npm run dev
-
-# Build and run compiled
-npm run build
-npm start
+npm test          # Run 47 unit tests
+npm run dev       # Run with mock operator
 ```
 
-Configuration is in `.env` (copy from `.env.example`). Set `OPERATOR_MODE=mock` for testing, `OPERATOR_MODE=rpa` for production with the RPA agent.
+### Updating the VM
+
+```batch
+update-oceanjet
+```
