@@ -1,0 +1,3 @@
+@echo off
+echo Starting OceanJet Orchestrator...
+npm run dev
