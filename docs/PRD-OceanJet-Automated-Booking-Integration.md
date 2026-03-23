@@ -2,7 +2,7 @@
 
 **Author:** Oran S.
 **Date:** March 3, 2026
-**Status:** Draft
+**Status:** Phase 2 Complete (RPA Agent + First Production E2E)
 **Stakeholders:** Operations, Engineering, OceanJet Partner Team
 
 ---
@@ -127,7 +127,7 @@ The system must handle bookings for routes that require two legs via a hub (e.g.
 After all tickets are issued in PRIME, the system must approve the booking on Bookaway via the API.
 
 **Acceptance Criteria:**
-- Given all ticket numbers have been collected for a booking, then the system calls `POST /bookings/v2/bookings/{booking_id}/approve` with the correct `_id` (item ID), `bookingCode` (all ticket numbers space-separated), and `seatsNumber` arrays populated correctly.
+- Given all ticket numbers have been collected for a booking, then the system calls `POST /bookings/v2/bookings/{booking_id}/approve` with `bookingCode` (all ticket numbers space-separated), and `departureTrip.seatsNumber` / `returnTrip.seatsNumber` arrays populated correctly. Note: the `approvalInputs` payload must **not** include an `_id` field — including it causes a 500 "Cast to ObjectId" error.
 - Given successful approval, then the booking status changes from "Pending" to "Approved" on Bookaway.
 - Given the approval API call fails, then the system retries up to 3 times before flagging for manual review.
 
@@ -245,30 +245,28 @@ The system is designed as three independent, swappable layers. This modularity s
 ### System Components
 
 ```
-Cloud/Server (TypeScript)                  Windows VM
-┌─────────────────────────┐                ┌──────────────────────┐
-│  Orchestrator Service   │   HTTP API     │  PRIME RPA Agent     │
-│                         │◄──────────────►│  (Python/pywinauto)  │
-│  - Bookaway API client  │                │                      │
-│  - Queue polling        │  POST /issue   │  Exposes:            │
-│  - Data mapping         │  GET  /health  │  POST /issue-tickets │
-│  - Booking routing      │                │  GET  /health        │
-│  - Approval flow        │                │                      │
-│  - Slack alerts         │                │  Drives PRIME to     │
-│  - Logging              │                │  issue tickets and   │
-│                         │                │  returns ticket #s   │
-│  Future:                │                └──────────┬───────────┘
-│  - Route to operator B  │                           │
-│                         │                           ▼
-│                         │                ┌──────────────────────┐
-│                         │   HTTP API     │  OceanJet PRIME      │
-│                         │◄──────────────►│  (Desktop App)       │
-│                         │                └──────────────────────┘
-│                         │
-│                         │   HTTP API     ┌──────────────────────┐
-│                         │◄──────────────►│  Future Operator     │
-│                         │                │  (Playwright/API)    │
-└─────────────────────────┘                └──────────────────────┘
+Windows VM (both services on same machine)
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│  ┌─────────────────────────┐     ┌──────────────────────────┐  │
+│  │  Orchestrator Service   │     │  PRIME RPA Agent         │  │
+│  │  (Node.js/TypeScript)   │     │  (Python/pywinauto)      │  │
+│  │                         │     │                          │  │
+│  │  - Bookaway API client  │ HTTP│  Exposes:                │  │
+│  │  - Queue polling        │────►│  POST /issue-tickets     │  │
+│  │  - Data mapping         │     │  GET  /health            │  │
+│  │  - Booking routing      │     │                          │  │
+│  │  - Approval flow        │     │  Drives PRIME to         │  │
+│  │  - Slack alerts         │     │  issue tickets and       │  │
+│  │  - Logging              │     │  returns ticket #s       │  │
+│  └─────────────────────────┘     └────────────┬─────────────┘  │
+│                                                │                │
+│                                                ▼                │
+│                                   ┌──────────────────────────┐  │
+│                                   │  OceanJet PRIME          │  │
+│                                   │  (Desktop App)           │  │
+│                                   └──────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 **Processing Flow:**
@@ -304,7 +302,7 @@ The "last mile" that actually issues tickets on the operator's system. For Ocean
 - **PRIME is noted as "a little bit slow."** The automation must account for variable load times with intelligent waits rather than fixed delays.
 - **Each PRIME bot instance requires a separate license.** Scaling to handle peak volumes (~600 tickets/day) may require multiple parallel bot instances.
 - **PRIME's 1-month booking window.** Bookings for departures >1 month out must be deferred and retried.
-- **Ticket number capture is fragile.** The success dialog disappears on click — the RPA must read the ticket number from the dialog's text element before dismissing it. With selector-based RPA, this is actually more reliable than vision-based approaches since the bot reads the element's text property directly rather than interpreting pixels.
+- **Ticket number capture uses Gemini Vision.** PRIME's success dialog is a Delphi VCL window that paints text directly on the window surface — the text is not accessible via Windows UI Automation (UIA). The RPA agent captures a screenshot of the dialog and sends it to Gemini Flash's vision API to extract the ticket number. This is the same approach used for reading the voyage schedule grid. If Gemini fails to extract the ticket number after a successful issuance (Confirm → Yes already clicked), the RPA raises `RPA_INTERNAL_ERROR` (system-level stop) to prevent duplicate tickets.
 
 ### Data Mapping Tables (Static Configuration)
 
@@ -326,6 +324,7 @@ The "last mile" that actually issues tickets on the operator's system. For Ocean
 | Iloilo | ILO |
 | Larena, Siquijor | SIQ |
 | Ormoc | ORM |
+| Ormoc, Leyte | ORM |
 | Plaridel | PLA |
 | Siquijor | SIQ |
 | Tubigon | TUB |
@@ -389,7 +388,9 @@ The "last mile" that actually issues tickets on the operator's system. For Ocean
 
 ### Still Open
 
-No blocking questions remain. All questions have been resolved and incorporated into the relevant PRD sections.
+| # | Question | Status |
+|---|---|---|
+| 9 | Does PRIME return 1 or 2 ticket numbers for a round-trip booking? | **Open.** Need to test with a real round-trip booking. If 2 ticket numbers, need to split between departure and return seat arrays. |
 
 ---
 
@@ -397,11 +398,11 @@ No blocking questions remain. All questions have been resolved and incorporated 
 
 - **No hard external deadline**, but the initiative directly supports a company OKR for the current period.
 - **Dependency:** Engineering needs access to a PRIME test environment (or test account) to develop and validate the RPA automation.
-- **Suggested phasing:**
-  - **Phase 1:** One-way bookings only (single-leg, standard classes). This is the simplest flow and covers the majority of bookings.
-  - **Phase 2:** Round-trip bookings. Adds return leg processing and dual seat number population.
-  - **Phase 3:** Connecting routes. Adds multi-leg routing logic and the connecting routes lookup table.
-- **Each phase should be independently deployable** and deliver value. Phase 1 alone would automate the majority of the ~27,000 annual manual ticket issuances.
+- **Actual phasing (updated to reflect implementation):**
+  - **Phase 1 (Complete):** TypeScript orchestrator — Bookaway API client, data mapper (all 4 booking types), booking processor, polling loop, Slack alerts, mock operator. 47 unit tests passing.
+  - **Phase 2 (Complete):** Python RPA agent — pywinauto + Gemini Vision driving PRIME desktop app. Form fill, voyage selection, ticket issuance, ticket number capture, print preview handling, error detection (11/12 error codes). First production E2E booking completed March 22, 2026.
+  - **Phase 3 (Next):** Multi-booking continuous mode, round-trip testing, SESSION_EXPIRED detection, events table → BigQuery.
+- All 4 booking types (one-way, round-trip, connecting-one-way, connecting-round-trip) are supported in the orchestrator. One-way bookings have been validated end-to-end in production.
 
 ---
 
@@ -423,7 +424,7 @@ This cycle repeats for every passenger in every booking, ~101,000 times per year
 
 ## Appendix B: Reference Documents
 
-- **Bookaway Backoffice API Documentation (Corrected):** `docs/bookaway-backoffice-API-documentation-v2.md` — based on live API validation
-- **Bookaway Backoffice API Documentation (Original):** `docs/bookaway-backoffice-API-documentation.md` — kept for reference, contains incorrect field paths
+- **Bookaway Backoffice API Documentation (Corrected):** `docs/bookaway-backoffice-API-documentation-v2.md` — based on live API validation, corrects field paths from original doc
 - **OceanJet Inventory Reference Sheet:** `docs/oceanjet-inventory-reference-sheet.md`
+- **System Design:** `docs/system-design.md` — Architecture, API contract, processing flow, PRIME UI details
 - **Implementation Status:** `docs/implementation-status.md` — current build progress and next steps

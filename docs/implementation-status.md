@@ -39,8 +39,7 @@ The full orchestrator is implemented, compiles cleanly, and has been verified ag
 
 | Document | Description |
 | --- | --- |
-| `docs/bookaway-backoffice-API-documentation-v2.md` | **Corrected** API documentation based on live API responses |
-| `docs/bookaway-backoffice-API-documentation.md` | Original API docs (kept for reference — has incorrect field paths) |
+| `docs/bookaway-backoffice-API-documentation-v2.md` | Bookaway API documentation (corrected based on live API responses) |
 | `docs/PRD-OceanJet-Automated-Booking-Integration.md` | Product Requirements Document |
 | `docs/oceanjet-inventory-reference-sheet.md` | Station codes, accommodation codes, connecting routes |
 | `docs/OceanJet-Bookaway-current-manual-booking-flow.md` | Current manual workflow description |
