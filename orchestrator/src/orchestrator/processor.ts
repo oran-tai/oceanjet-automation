@@ -87,7 +87,19 @@ function buildApprovalPayload(
   departureTickets: string[],
   returnTickets: string[]
 ): ApprovalRequest {
-  const allTickets = [...departureTickets, ...returnTickets];
+  // Interleave departure and return tickets by passenger for booking code
+  // e.g., [dep1, ret1, dep2, ret2] — matches Bookaway admin display order
+  const allTickets: string[] = [];
+  for (let i = 0; i < departureTickets.length; i++) {
+    allTickets.push(departureTickets[i]);
+    if (returnTickets[i]) {
+      allTickets.push(returnTickets[i]);
+    }
+  }
+  // Append any remaining return tickets (shouldn't happen, but safe)
+  for (let i = departureTickets.length; i < returnTickets.length; i++) {
+    allTickets.push(returnTickets[i]);
+  }
   return {
     extras: [],
     pickups: [{ time: 0, location: null }],

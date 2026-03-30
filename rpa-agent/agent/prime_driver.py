@@ -516,7 +516,9 @@ class PrimeDriver:
 
         if "Process Complete" in dialog_text or "Ticket number" in dialog_text:
             # Success — extract ticket numbers from brackets [XXXXXXXX]
-            ticket_numbers = re.findall(r"\[(\d+)\]", dialog_text)
+            # Extract ticket numbers — handles both [12345678] (one-way)
+            # and [13023072,13023073] (round-trip, comma-separated in one bracket pair)
+            ticket_numbers = re.findall(r"\d{7,}", dialog_text)
             logger.info(f"Ticket number(s) captured: {ticket_numbers}")
 
             # Click OK to close the success dialog
@@ -697,7 +699,7 @@ class PrimeDriver:
                     i, pax, booking["departureLeg"], "Round Trip",
                     booking.get("returnLeg"),
                     f"Pax {i+1}/{len(passengers)} round-trip",
-                    "departure",
+                    "round-trip",
                 ))
 
         elif booking_type == "connecting-one-way":
@@ -782,10 +784,18 @@ class PrimeDriver:
 
                 for ticket_no in ticket_numbers:
                     pax_results[pax_idx]["tickets"].append(ticket_no)
-                    if leg_type == "departure":
-                        departure_tickets.append(ticket_no)
-                    else:
+
+                if leg_type == "round-trip" and len(ticket_numbers) == 2:
+                    # Round-trip: PRIME returns 2 tickets per passenger
+                    # First = departure, second = return
+                    departure_tickets.append(ticket_numbers[0])
+                    return_tickets.append(ticket_numbers[1])
+                elif leg_type == "return":
+                    for ticket_no in ticket_numbers:
                         return_tickets.append(ticket_no)
+                else:
+                    for ticket_no in ticket_numbers:
+                        departure_tickets.append(ticket_no)
 
             except PrimeError as e:
                 has_failure = True

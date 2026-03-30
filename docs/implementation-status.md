@@ -160,7 +160,7 @@ Communication: orchestrator → HTTP POST localhost:8080/issue-tickets → RPA a
 ### 5. Remaining Work
 
 - **`SESSION_EXPIRED`** — detect PRIME login session timeout
-- **Round-trip ticket count** — open question: does PRIME return 1 or 2 ticket numbers for round-trip?
+- **~~Round-trip ticket count~~** — resolved: PRIME returns 2 tickets per passenger (departure + return), comma-separated in one dialog. Code updated to split them correctly.
 - **Events table → BigQuery** — structured event publishing for dashboards
 - **Multi-booking continuous mode** — remove TARGET_BOOKING, process all pending bookings
 - **Automated cancellations** — P2

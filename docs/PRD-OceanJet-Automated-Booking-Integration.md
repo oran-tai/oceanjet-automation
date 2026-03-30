@@ -388,9 +388,13 @@ The "last mile" that actually issues tickets on the operator's system. For Ocean
 
 ### Still Open
 
-| # | Question | Status |
+No blocking questions remain.
+
+### Recently Resolved
+
+| # | Question | Resolution |
 |---|---|---|
-| 9 | Does PRIME return 1 or 2 ticket numbers for a round-trip booking? | **Open.** Need to test with a real round-trip booking. If 2 ticket numbers, need to split between departure and return seat arrays. |
+| 9 | Does PRIME return 1 or 2 ticket numbers for a round-trip booking? | **2 tickets per passenger**, comma-separated in one dialog: `[13023072,13023073]`. First = departure, second = return. Booking code contains all tickets; `departureTrip.seatsNumber` and `returnTrip.seatsNumber` each get one ticket per passenger. |
 
 ---
 

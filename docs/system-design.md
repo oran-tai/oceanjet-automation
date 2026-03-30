@@ -347,8 +347,8 @@ Note: `approvalInputs` must **not** include an `_id` field — including it caus
 - **What does the success dialog look like?** → "Process Complete. Ticket number(s): [XXXXXXXX]." — text is painted directly on the Delphi window surface, **not accessible via UIA**. Must use Gemini Vision screenshot OCR to read it.
 - **What does a failure/error dialog look like?** → Same Delphi dialog with error message text. Also requires Gemini Vision to read. Error text is mapped to error codes by the RPA agent.
 - **Does PRIME have any idle timeout or auto-logout?** → Still unknown. `SESSION_EXPIRED` error code is defined but detection is not yet implemented (1 of 12 error codes remaining).
+- **Does PRIME return 1 or 2 ticket numbers for a round-trip booking?** → **2 ticket numbers per passenger**, comma-separated in one dialog: `[13023072,13023073]`. First = departure, second = return. For 2 passengers round-trip: booking code = all 4 tickets, `departureTrip.seatsNumber` = [dep1, dep2], `returnTrip.seatsNumber` = [ret1, ret2].
 
 ## Open Questions
 
-- [ ] Does PRIME return 1 or 2 ticket numbers for a round-trip booking?
 - [ ] How to detect PRIME session expiration (`SESSION_EXPIRED`)?
