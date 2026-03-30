@@ -39,6 +39,29 @@ docs/                   # Shared documentation
 setup.ps1               # VM setup script (installs everything)
 ```
 
+## VM Operations
+
+### Updating VM with latest code
+```batch
+update-oceanjet
+```
+If not installed, create it: `(echo @echo off& echo cd /d C:\oceanjet-automation& echo git pull origin main& echo cd /d C:\oceanjet-automation\rpa-agent& echo py -m pip install -r requirements.txt --quiet& echo cd /d C:\oceanjet-automation\orchestrator& echo call npm install --silent& echo echo Updated!& echo pause) > C:\Windows\update-oceanjet.bat`
+
+### Setting TARGET_BOOKING on VM
+```batch
+cd C:\oceanjet-automation\orchestrator && powershell -Command "(Get-Content .env) -replace 'TARGET_BOOKING=.*', 'TARGET_BOOKING=BW1234567' | Set-Content .env"
+```
+
+### Starting services on VM
+1. Open PRIME and log in to Issue New Ticket screen
+2. Start RPA Agent: `run-rpa` (runs `cd C:\oceanjet-automation\rpa-agent && start.bat`)
+3. Start Orchestrator: `run-orch` (runs `cd C:\oceanjet-automation\orchestrator && start.bat`)
+
+### Checking env file
+```batch
+type C:\oceanjet-automation\orchestrator\.env
+```
+
 ## Important Conventions
 - All credentials in `.env` only — never commit secrets
 - Each microservice has its own `.env` and `.env.example`

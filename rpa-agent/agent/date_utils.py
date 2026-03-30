@@ -67,3 +67,81 @@ def match_departure_time(target_time: str, grid_times: list[str]) -> int | None:
                 continue
 
     return None
+
+
+def find_connecting_departure(
+    arrival_time: str,
+    grid_times: list[str],
+    min_wait_minutes: int = 20,
+    max_wait_minutes: int = 120,
+) -> int | None:
+    """Find the best connecting leg 2 departure from the voyage grid.
+
+    Picks the closest departure where:
+        arrival_time + min_wait <= departure <= arrival_time + max_wait
+
+    Args:
+        arrival_time: Leg 1 arrival time, e.g. "3/27/2026 3:00:00 PM" or "3:00 PM"
+        grid_times: Departure datetime strings from Gemini Vision
+        min_wait_minutes: Minimum connection time (default 20 min)
+        max_wait_minutes: Maximum connection time (default 120 min)
+
+    Returns:
+        0-based row index of the best match, or None if no valid connection.
+    """
+    from datetime import timedelta
+
+    # Parse arrival time
+    arrival_dt = None
+    for fmt in (
+        "%m/%d/%Y %I:%M:%S %p",
+        "%m/%d/%Y %I:%M %p",
+        "%I:%M:%S %p",
+        "%I:%M %p",
+    ):
+        try:
+            arrival_dt = datetime.strptime(arrival_time.strip(), fmt)
+            break
+        except ValueError:
+            continue
+
+    if arrival_dt is None:
+        return None
+
+    min_depart = arrival_dt + timedelta(minutes=min_wait_minutes)
+    max_depart = arrival_dt + timedelta(minutes=max_wait_minutes)
+
+    best_idx = None
+    best_diff = None
+
+    for i, grid_time in enumerate(grid_times):
+        grid_time = grid_time.strip()
+        grid_dt = None
+        for fmt in (
+            "%m/%d/%Y %I:%M:%S %p",
+            "%m/%d/%Y %I:%M %p",
+            "%I:%M:%S %p",
+            "%I:%M %p",
+        ):
+            try:
+                grid_dt = datetime.strptime(grid_time, fmt)
+                break
+            except ValueError:
+                continue
+
+        if grid_dt is None:
+            continue
+
+        # For time-only formats, use same date as arrival for comparison
+        if grid_dt.year == 1900:
+            grid_dt = grid_dt.replace(
+                year=arrival_dt.year, month=arrival_dt.month, day=arrival_dt.day
+            )
+
+        if min_depart <= grid_dt <= max_depart:
+            diff = abs((grid_dt - min_depart).total_seconds())
+            if best_diff is None or diff < best_diff:
+                best_diff = diff
+                best_idx = i
+
+    return best_idx

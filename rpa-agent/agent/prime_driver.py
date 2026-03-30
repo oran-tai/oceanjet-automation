@@ -90,13 +90,17 @@ class PrimeDriver:
                 f"Failed to click Refresh: {e}",
             )
 
-    def fill_trip_details(self, leg, trip_type: str, return_leg=None):
+    def fill_trip_details(self, leg, trip_type: str, return_leg=None, connecting_arrival: str = None) -> dict:
         """Fill the Trip Details pane.
 
         Args:
             leg: Dict with origin, destination, date, time, accommodation.
             trip_type: "One Way" or "Round Trip".
             return_leg: Optional dict for return trip details.
+            connecting_arrival: Leg 1 arrival time for connecting leg 2 dynamic selection.
+
+        Returns:
+            Dict with "voyage_number" and "arrival_time" from the selected voyage.
         """
         logger.info(
             f"Filling trip details: {leg['origin']}->{leg['destination']} "
@@ -164,8 +168,8 @@ class PrimeDriver:
         time.sleep(1)
 
         # 7. Select departure voyage via Gemini Vision
-        voyage_no = self.select_voyage(leg["time"])
-        logger.info(f"Selected departure voyage: {voyage_no}")
+        voyage_result = self.select_voyage(leg["time"], connecting_arrival=connecting_arrival)
+        logger.info(f"Selected departure voyage: {voyage_result['voyage_number']}")
         time.sleep(0.5)
 
         # 8. If round-trip, search and select return voyage
@@ -179,8 +183,8 @@ class PrimeDriver:
             time.sleep(1)
 
             # Select return voyage via Gemini Vision
-            return_voyage_no = self.select_voyage(return_leg["time"])
-            logger.info(f"Selected return voyage: {return_voyage_no}")
+            return_voyage_result = self.select_voyage(return_leg["time"])
+            logger.info(f"Selected return voyage: {return_voyage_result['voyage_number']}")
             time.sleep(0.5)
 
         # 9. Select accommodation (combo_box[0])
@@ -193,6 +197,8 @@ class PrimeDriver:
                 f"Accommodation '{leg['accommodation']}' not found in PRIME dropdown",
             )
         time.sleep(0.3)
+
+        return voyage_result
 
     def _close_voyage_dialog(self, voyage_dlg):
         """Reliably close the Voyage Schedule dialog.
@@ -221,14 +227,16 @@ class PrimeDriver:
         send_keys("%{F4}")
         time.sleep(0.5)
 
-    def select_voyage(self, target_time: str) -> str:
+    def select_voyage(self, target_time: str, connecting_arrival: str = None) -> dict:
         """Select a voyage from the Voyage Schedule dialog using Gemini Vision.
 
         Args:
             target_time: Target departure time, e.g. "1:00 PM".
+                         If empty and connecting_arrival is set, uses 20-120 min rule.
+            connecting_arrival: Leg 1 arrival time for connecting route leg 2 selection.
 
         Returns:
-            Voyage number string for logging.
+            Dict with "voyage_number" and "arrival_time".
 
         Raises:
             PrimeError: If no voyages found or time doesn't match.
@@ -266,6 +274,7 @@ class PrimeDriver:
             "Extract ALL rows from the grid as a JSON array. Each row should be an object with:\n"
             '- "voyage_number": the voyage number (e.g., "OJ884A")\n'
             '- "departure_time": the departure date/time (e.g., "3/27/2026 7:30:00 AM")\n'
+            '- "arrival_time": the arrival date/time (e.g., "3/27/2026 9:30:00 AM")\n'
             '- "origin": origin code\n'
             '- "destination": destination code\n\n'
             "Return ONLY the JSON array, no other text. "
@@ -315,17 +324,34 @@ class PrimeDriver:
                 "Voyage Schedule grid is empty - no voyages available",
             )
 
-        # Extract departure times for matching
+        # Extract times for matching
         grid_times = [row.get("departure_time", "") for row in grid_rows]
-        target_row = match_departure_time(target_time, grid_times)
 
-        if target_row is None:
-            self._close_voyage_dialog(voyage_dlg)
-            raise PrimeError(
-                TicketErrorCode.VOYAGE_TIME_MISMATCH,
-                f"No voyage matches departure time {target_time}. "
-                f"Available times: {grid_times}",
+        if connecting_arrival and not target_time:
+            # Connecting route leg 2: find best departure within 20-120 min of arrival
+            from agent.date_utils import find_connecting_departure
+            target_row = find_connecting_departure(connecting_arrival, grid_times)
+            if target_row is None:
+                self._close_voyage_dialog(voyage_dlg)
+                raise PrimeError(
+                    TicketErrorCode.VOYAGE_TIME_MISMATCH,
+                    f"No connecting voyage within 20-120 min of arrival {connecting_arrival}. "
+                    f"Available times: {grid_times}",
+                )
+            logger.info(
+                f"Connecting voyage selected: {grid_times[target_row]} "
+                f"(arrival was {connecting_arrival})"
             )
+        else:
+            # Standard: match exact departure time
+            target_row = match_departure_time(target_time, grid_times)
+            if target_row is None:
+                self._close_voyage_dialog(voyage_dlg)
+                raise PrimeError(
+                    TicketErrorCode.VOYAGE_TIME_MISMATCH,
+                    f"No voyage matches departure time {target_time}. "
+                    f"Available times: {grid_times}",
+                )
 
         # Navigate to the target row using arrow keys
         # Click on the dialog to ensure it has focus
@@ -350,7 +376,8 @@ class PrimeDriver:
         time.sleep(0.5)
 
         voyage_number = grid_rows[target_row].get("voyage_number", "unknown")
-        return voyage_number
+        arrival_time = grid_rows[target_row].get("arrival_time", "")
+        return {"voyage_number": voyage_number, "arrival_time": arrival_time}
 
     def fill_personal_details(self, passenger, contact_info: str = ""):
         """Fill the Personal Details pane for one passenger.
@@ -772,12 +799,27 @@ class PrimeDriver:
         has_failure = False
         last_error_code = None
         last_error_msg = None
+        last_arrival_time = None  # For connecting routes: leg 1 arrival → leg 2 selection
 
         for pax_idx, pax, leg, trip_type, return_leg, label, leg_type in tasks:
             logger.info(f"--- {label} ---")
             try:
                 self.click_refresh()
-                self.fill_trip_details(leg, trip_type, return_leg=return_leg)
+
+                # For connecting leg 2 (empty time), pass leg 1's arrival for dynamic selection
+                connecting_arrival = None
+                if not leg.get("time") and last_arrival_time:
+                    connecting_arrival = last_arrival_time
+
+                voyage_result = self.fill_trip_details(
+                    leg, trip_type, return_leg=return_leg,
+                    connecting_arrival=connecting_arrival,
+                )
+
+                # Store arrival time for connecting route leg 2 selection
+                if voyage_result and voyage_result.get("arrival_time"):
+                    last_arrival_time = voyage_result["arrival_time"]
+
                 self.fill_personal_details(pax, contact_info)
 
                 # Click Issue, handle confirmation, capture ticket number(s)

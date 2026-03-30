@@ -111,10 +111,10 @@ describe('mapBookingToOceanJet', () => {
     expect(result.connectingLegs).toHaveLength(2);
     expect(result.connectingLegs![0].origin).toBe('CEB');
     expect(result.connectingLegs![0].destination).toBe('TAG');
-    expect(result.connectingLegs![0].time).toBe('1:00 PM');
+    expect(result.connectingLegs![0].time).toBe('1:00 PM'); // Uses Bookaway departure time
     expect(result.connectingLegs![1].origin).toBe('TAG');
     expect(result.connectingLegs![1].destination).toBe('SIQ');
-    expect(result.connectingLegs![1].time).toBe('3:20 PM');
+    expect(result.connectingLegs![1].time).toBe(''); // Dynamic: RPA selects based on leg 1 arrival
   });
 
   it('maps a connecting round-trip (Cebu to Siquijor and back)', () => {

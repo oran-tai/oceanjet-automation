@@ -92,10 +92,8 @@ describe('findConnectingRoute', () => {
     expect(route!.hub).toBe('TAG');
     expect(route!.leg1.origin).toBe('CEB');
     expect(route!.leg1.destination).toBe('TAG');
-    expect(route!.leg1.departureTime).toBe('13:00');
     expect(route!.leg2.origin).toBe('TAG');
     expect(route!.leg2.destination).toBe('SIQ');
-    expect(route!.leg2.departureTime).toBe('15:20');
   });
 
   it('finds Cebu to Surigao via Maasin', () => {

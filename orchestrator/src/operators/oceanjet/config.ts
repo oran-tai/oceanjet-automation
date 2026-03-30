@@ -58,7 +58,6 @@ export const ACCOMMODATION_CODES: Record<string, string> = {
 export interface ConnectingRouteLeg {
   origin: string;
   destination: string;
-  departureTime: string; // 24h format
 }
 
 export interface ConnectingRoute {
@@ -70,33 +69,33 @@ export interface ConnectingRoute {
 export const CONNECTING_ROUTES: Record<string, ConnectingRoute> = {
   'CEB-SIQ': {
     hub: 'TAG',
-    leg1: { origin: 'CEB', destination: 'TAG', departureTime: '13:00' },
-    leg2: { origin: 'TAG', destination: 'SIQ', departureTime: '15:20' },
+    leg1: { origin: 'CEB', destination: 'TAG' },
+    leg2: { origin: 'TAG', destination: 'SIQ' },
   },
   'SIQ-CEB': {
     hub: 'TAG',
-    leg1: { origin: 'SIQ', destination: 'TAG', departureTime: '08:20' },
-    leg2: { origin: 'TAG', destination: 'CEB', departureTime: '10:40' },
+    leg1: { origin: 'SIQ', destination: 'TAG' },
+    leg2: { origin: 'TAG', destination: 'CEB' },
   },
   'CEB-DUM': {
     hub: 'TAG',
-    leg1: { origin: 'CEB', destination: 'TAG', departureTime: '08:20' },
-    leg2: { origin: 'TAG', destination: 'DUM', departureTime: '10:40' },
+    leg1: { origin: 'CEB', destination: 'TAG' },
+    leg2: { origin: 'TAG', destination: 'DUM' },
   },
   'DUM-CEB': {
     hub: 'TAG',
-    leg1: { origin: 'DUM', destination: 'TAG', departureTime: '13:00' },
-    leg2: { origin: 'TAG', destination: 'CEB', departureTime: '15:20' },
+    leg1: { origin: 'DUM', destination: 'TAG' },
+    leg2: { origin: 'TAG', destination: 'CEB' },
   },
   'CEB-SUR': {
     hub: 'MAA',
-    leg1: { origin: 'CEB', destination: 'MAA', departureTime: '07:00' },
-    leg2: { origin: 'MAA', destination: 'SUR', departureTime: '10:30' },
+    leg1: { origin: 'CEB', destination: 'MAA' },
+    leg2: { origin: 'MAA', destination: 'SUR' },
   },
   'SUR-CEB': {
     hub: 'MAA',
-    leg1: { origin: 'SUR', destination: 'MAA', departureTime: '13:00' },
-    leg2: { origin: 'MAA', destination: 'CEB', departureTime: '15:30' },
+    leg1: { origin: 'SUR', destination: 'MAA' },
+    leg2: { origin: 'MAA', destination: 'CEB' },
   },
 };
 

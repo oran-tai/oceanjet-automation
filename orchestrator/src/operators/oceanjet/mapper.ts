@@ -147,14 +147,14 @@ export function mapBookingToOceanJet(booking: BookingDetail): TranslatedBooking 
         origin: connectingRoute.leg1.origin,
         destination: connectingRoute.leg1.destination,
         date: booking.misc.departureDate,
-        time: to12Hour(connectingRoute.leg1.departureTime),
+        time: to12Hour(booking.misc.departureTime),
         accommodation,
       },
       {
         origin: connectingRoute.leg2.origin,
         destination: connectingRoute.leg2.destination,
         date: booking.misc.departureDate,
-        time: to12Hour(connectingRoute.leg2.departureTime),
+        time: '', // Dynamic: RPA selects based on leg 1 arrival + 20-120 min rule
         accommodation,
       },
     ];
@@ -172,14 +172,14 @@ export function mapBookingToOceanJet(booking: BookingDetail): TranslatedBooking 
           origin: reverseRoute.leg1.origin,
           destination: reverseRoute.leg1.destination,
           date: booking.misc.returnDepartureDate!,
-          time: to12Hour(reverseRoute.leg1.departureTime),
+          time: to12Hour(booking.misc.returnDepartureTime!),
           accommodation,
         },
         {
           origin: reverseRoute.leg2.origin,
           destination: reverseRoute.leg2.destination,
           date: booking.misc.returnDepartureDate!,
-          time: to12Hour(reverseRoute.leg2.departureTime),
+          time: '', // Dynamic: RPA selects based on leg 1 arrival + 20-120 min rule
           accommodation,
         },
       ];
