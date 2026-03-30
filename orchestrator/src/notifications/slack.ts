@@ -23,7 +23,7 @@ export async function notifyBookingFailure(
   errorCode: TicketErrorCode,
   reason: string
 ): Promise<void> {
-  const bookawayLink = `https://admin.bookaway.com/bookings/${bookingId}`;
+  const bookawayLink = `https://admin.bookaway.com/bookings?booking=${bookingId}`;
   const message =
     `:warning: *Booking Failed — Manual Review Required*\n` +
     `*Reference:* ${reference}\n` +
@@ -59,7 +59,7 @@ export async function notifyPartialFailure(
     error?: string;
   }[]
 ): Promise<void> {
-  const bookawayLink = `https://admin.bookaway.com/bookings/${bookingId}`;
+  const bookawayLink = `https://admin.bookaway.com/bookings?booking=${bookingId}`;
   const details = results
     .map((r) =>
       r.success
