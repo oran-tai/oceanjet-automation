@@ -75,6 +75,26 @@ class PrimeDriver:
             title_re=" *Trip Type *", control_type="Pane"
         )
 
+    def _dismiss_same_station_dialog(self):
+        """Dismiss the 'Origin and Destination must not be the same' error dialog.
+
+        PRIME fires this dialog immediately when a combo box changes and
+        origin == destination (e.g., after Refresh retains the previous
+        values). We just click OK and continue — it's harmless.
+        """
+        try:
+            dlg = self.main_window.child_window(
+                title_re=".*OCEAN FAST FERRIES.*", control_type="Window"
+            )
+            if dlg.exists(timeout=0.5):
+                ok_btn = dlg.child_window(title="OK", control_type="Button")
+                if ok_btn.exists(timeout=0.5):
+                    logger.info("Dismissed 'Origin and Destination must not be the same' dialog")
+                    ok_btn.click_input()
+                    time.sleep(0.3)
+        except Exception:
+            pass  # No dialog — nothing to dismiss
+
     def click_refresh(self):
         """Click the Refresh button to reset the form between passengers."""
         logger.info("Clicking Refresh to reset form")
@@ -150,6 +170,7 @@ class PrimeDriver:
                 f"Origin station '{leg['origin']}' not found in PRIME dropdown",
             )
         time.sleep(0.3)
+        self._dismiss_same_station_dialog()
 
         # 5. Select destination (combo_box[1])
         dest_combo = combos[1]
@@ -161,6 +182,7 @@ class PrimeDriver:
                 f"Destination station '{leg['destination']}' not found in PRIME dropdown",
             )
         time.sleep(0.3)
+        self._dismiss_same_station_dialog()
 
         # 6. Click departure voyage search button (button[1])
         voyage_search_btn = buttons[1]
