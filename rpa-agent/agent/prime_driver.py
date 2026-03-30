@@ -763,7 +763,7 @@ class PrimeDriver:
                 "passengerIndex": i,
                 "passengerName": pax_name,
                 "tickets": [],
-                "success": True,
+                "success": False,
             }
 
         has_failure = False
@@ -782,6 +782,7 @@ class PrimeDriver:
                 ticket_numbers = self.handle_issue_result()
                 logger.info(f"Issued {len(ticket_numbers)} ticket(s) for {label}: {ticket_numbers}")
 
+                pax_results[pax_idx]["success"] = True
                 for ticket_no in ticket_numbers:
                     pax_results[pax_idx]["tickets"].append(ticket_no)
 
