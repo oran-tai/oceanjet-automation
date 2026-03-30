@@ -112,18 +112,31 @@ class PrimeDriver:
         radio.click_input()
         time.sleep(0.3)
 
+        edits = trip_details.children(control_type="Edit")
+        combos = trip_details.children(control_type="ComboBox")
+        buttons = trip_details.children(control_type="Button")
+
         # 2. Fill departure date (edit[1] in tree order)
         prime_date = bookaway_date_to_prime(leg["date"])
-        edits = trip_details.children(control_type="Edit")
         departure_date_edit = edits[1]
         departure_date_edit.click_input()
-        # Delphi masked edit: Home to start, type digits (mask inserts slashes)
         send_keys("{HOME}")
         send_keys(prime_date, with_spaces=True)
         time.sleep(0.3)
 
-        # 3. Select origin (combo_box[2])
-        combos = trip_details.children(control_type="ComboBox")
+        # 3. Fill return date if round-trip (edit[0])
+        if trip_type == "Round Trip" and return_leg:
+            logger.info(
+                f"Filling return date: {return_leg['date']}"
+            )
+            return_date = bookaway_date_to_prime(return_leg["date"])
+            return_date_edit = edits[0]
+            return_date_edit.click_input()
+            send_keys("{HOME}")
+            send_keys(return_date, with_spaces=True)
+            time.sleep(0.3)
+
+        # 4. Select origin (combo_box[2])
         origin_combo = combos[2]
         try:
             origin_combo.select(leg["origin"])
@@ -134,7 +147,7 @@ class PrimeDriver:
             )
         time.sleep(0.3)
 
-        # 4. Select destination (combo_box[1])
+        # 5. Select destination (combo_box[1])
         dest_combo = combos[1]
         try:
             dest_combo.select(leg["destination"])
@@ -145,18 +158,32 @@ class PrimeDriver:
             )
         time.sleep(0.3)
 
-        # 5. Click voyage search button (button[1])
-        buttons = trip_details.children(control_type="Button")
+        # 6. Click departure voyage search button (button[1])
         voyage_search_btn = buttons[1]
         voyage_search_btn.click_input()
         time.sleep(1)
 
-        # 6. Select voyage via Gemini Vision
+        # 7. Select departure voyage via Gemini Vision
         voyage_no = self.select_voyage(leg["time"])
-        logger.info(f"Selected voyage: {voyage_no}")
+        logger.info(f"Selected departure voyage: {voyage_no}")
         time.sleep(0.5)
 
-        # 7. Select accommodation (combo_box[0])
+        # 8. If round-trip, search and select return voyage
+        if trip_type == "Round Trip" and return_leg:
+            logger.info(
+                f"Selecting return voyage: {return_leg['time']}"
+            )
+            # Return voyage search (button[0])
+            return_search_btn = buttons[0]
+            return_search_btn.click_input()
+            time.sleep(1)
+
+            # Select return voyage via Gemini Vision
+            return_voyage_no = self.select_voyage(return_leg["time"])
+            logger.info(f"Selected return voyage: {return_voyage_no}")
+            time.sleep(0.5)
+
+        # 9. Select accommodation (combo_box[0])
         accom_combo = combos[0]
         try:
             accom_combo.select(leg["accommodation"])
@@ -166,30 +193,6 @@ class PrimeDriver:
                 f"Accommodation '{leg['accommodation']}' not found in PRIME dropdown",
             )
         time.sleep(0.3)
-
-        # 8. If round-trip, fill return details
-        if trip_type == "Round Trip" and return_leg:
-            logger.info(
-                f"Filling return trip: {return_leg['origin']}->{return_leg['destination']} "
-                f"on {return_leg['date']} at {return_leg['time']}"
-            )
-            # Return date (edit[0])
-            return_date = bookaway_date_to_prime(return_leg["date"])
-            return_date_edit = edits[0]
-            return_date_edit.click_input()
-            send_keys("{HOME}")
-            send_keys(return_date, with_spaces=True)
-            time.sleep(0.3)
-
-            # Return voyage search (button[0])
-            return_search_btn = buttons[0]
-            return_search_btn.click_input()
-            time.sleep(1)
-
-            # Select return voyage
-            return_voyage_no = self.select_voyage(return_leg["time"])
-            logger.info(f"Selected return voyage: {return_voyage_no}")
-            time.sleep(0.5)
 
     def _close_voyage_dialog(self, voyage_dlg):
         """Reliably close the Voyage Schedule dialog.
