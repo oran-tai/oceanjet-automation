@@ -74,10 +74,10 @@ function isDepartureWithinWindow(departureDateStr: string): boolean {
     return true;
   }
 
-  const oneMonthFromNow = new Date();
-  oneMonthFromNow.setMonth(oneMonthFromNow.getMonth() + 1);
+  const twoMonthsFromNow = new Date();
+  twoMonthsFromNow.setMonth(twoMonthsFromNow.getMonth() + 2);
 
-  return departureDate <= oneMonthFromNow;
+  return departureDate <= twoMonthsFromNow;
 }
 
 /**
