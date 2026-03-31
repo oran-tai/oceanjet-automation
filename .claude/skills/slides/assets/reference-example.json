@@ -1,0 +1,342 @@
+[
+  {"type": "title", "title": "Ops-Operator Communication Analysis", "subtitle": "Ops Team Perspective  |  2026-01-29 to 2026-03-09  |  80 WhatsApp Groups"},
+
+  {"type": "section", "title": "Executive Summary"},
+
+  {"type": "content", "title": "The Big Picture",
+    "callout": "14,143 messages across 80 WhatsApp groups in 39 days",
+    "bullets": [
+      {"text": "Ops sends 6,942 messages (49%) — receives 7,201 (51%)", "sub_bullets": [
+        "~175 outbound text messages per day, 7 days a week",
+        "~5,400 unique booking threads tracked"
+      ]},
+      "37% of ops outbound = confirmations + ticket requests — highly templated, highly automatable",
+      "Top 4 ops members handle 37% of all outbound — 27-32 msgs/day across 20+ groups",
+      "Worst-case bookings: 12 ops messages, 0 operator replies, 4-5 ops senders chasing the same thread"
+    ]
+  },
+
+  {"type": "section", "title": "Ops Team Workload"},
+
+  {"type": "content", "title": "Volume Summary",
+    "table": {
+      "headers": ["Metric", "Count"],
+      "rows": [
+        ["Total messages (all types)", "14,143"],
+        ["Ops-to-operator messages", "6,942 (49%)"],
+        ["Operator-to-ops messages", "7,201 (51%)"],
+        ["Unique WhatsApp groups", "80"],
+        ["Unique senders", "199"],
+        ["Unique booking threads (ops-initiated)", "~2,891"],
+        ["Unique booking threads (operator-initiated)", "~2,530"],
+        ["Average daily text messages (ops sent)", "~175/day"]
+      ]
+    }
+  },
+
+  {"type": "content", "title": "Top Ops Team Members by Volume",
+    "callout": "Top 4 members handle 37% of all outbound messages",
+    "table": {
+      "headers": ["Team Member", "Total Msgs", "Groups Active", "Msgs/Day"],
+      "rows": [
+        ["Thanah", "861", "22", "31.9"],
+        ["Kseniia_Travelier", "629", "20", "27.3"],
+        ["Vicki_Travelier", "587", "21", "21.7"],
+        ["Nine09", "498", "20", "20.8"],
+        ["Venice", "477", "12", "18.3"],
+        ["Nat_Travelier", "389", "21", "16.9"],
+        ["Travelier Ops 14", "365", "33", "14.6"],
+        ["Secil Travelier", "287", "22", "20.5"]
+      ]
+    }
+  },
+
+  {"type": "section", "title": "Message Categories"},
+
+  {"type": "content", "title": "Ops-to-Operator Message Breakdown (1/2)",
+    "table": {
+      "headers": ["Category", "Ops Msgs", "Operator Msgs", "Total", "% of Ops Text"],
+      "rows": [
+        ["Confirmation requests", "1,495", "435", "1,930", "26.6%"],
+        ["Ticket attachment requests", "659", "727", "1,386", "11.7%"],
+        ["Cancellation coordination", "597", "848", "1,445", "10.6%"],
+        ["Refund coordination", "561", "828", "1,389", "10.0%"],
+        ["Acknowledgments/greetings", "605", "747", "1,352", "10.8%"],
+        ["Follow-ups/reminders", "254", "321", "575", "4.5%"],
+        ["Schedule/pickup queries", "151", "227", "378", "2.7%"]
+      ]
+    }
+  },
+
+  {"type": "content", "title": "Ops-to-Operator Message Breakdown (2/2)",
+    "table": {
+      "headers": ["Category", "Ops Msgs", "Operator Msgs", "Total", "% of Ops Text"],
+      "rows": [
+        ["Booking references", "132", "65", "197", "2.3%"],
+        ["Amendments", "105", "194", "299", "1.9%"],
+        ["Passenger info", "76", "72", "148", "1.4%"],
+        ["Complaint/issue escalation", "73", "45", "118", "1.3%"],
+        ["Approval requests", "56", "33", "89", "1.0%"],
+        ["Voucher requests", "9", "13", "22", "0.2%"],
+        ["Availability/block mgmt", "10", "8", "18", "0.2%"],
+        ["Other/uncategorized", "839", "1,565", "2,404", "14.9%"]
+      ]
+    }
+  },
+
+  {"type": "content", "title": "Image Messages Sent by Ops",
+    "table": {
+      "headers": ["Type", "Count"],
+      "rows": [
+        ["Booking screenshots", "236"],
+        ["Ticket images", "126"],
+        ["Other images", "407"],
+        ["No metadata", "364"],
+        ["Voucher images", "6"]
+      ]
+    }
+  },
+
+  {"type": "section", "title": "Pain Points"},
+
+  {"type": "content", "title": "#1: Confirmation Request Overload",
+    "callout": "1,495 messages (26.6% of ops outbound) — CRITICAL severity",
+    "bullets": [
+      {"text": "Single largest category — overwhelmingly templated, identical messages", "sub_bullets": [
+        "~25-50 confirmation messages per day of purely mechanical work"
+      ]},
+      "On one day alone, a single ops member sent 12+ identical \"please confirm\" messages across groups",
+      "Each requires: find the right group → type the booking ID → send formulaic message"
+    ],
+    "quotes": [
+      "\"Dear team please confirm BW4885536\" — Secil Travelier, 2026-03-09",
+      "\"BW4885895 Dear team, please confirm the booking. Thank you!\" — Kseniia, 2026-03-09"
+    ]
+  },
+
+  {"type": "content", "title": "#2: Chasing Unresponsive Operators",
+    "callout": "254 explicit follow-ups + many embedded in other categories — CRITICAL severity",
+    "bullets": [
+      "Worst cases: 5-12 ops messages per booking with zero operator response",
+      {"text": "Multiple ops members chase the same booking independently", "sub_bullets": [
+        "4-5 unique senders per thread is common — no visibility into who already followed up"
+      ]}
+    ]
+  },
+
+  {"type": "content", "title": "#2: Worst Unresponsive Operator Cases",
+    "table": {
+      "headers": ["Booking", "Ops Msgs", "Op Replies", "Thread Duration", "Unique Ops Senders"],
+      "rows": [
+        ["BW4695782", "12", "0", "210 hours", "4"],
+        ["BW4699521", "10", "0", "217 hours", "3"],
+        ["BW4727380", "8", "0", "248 hours", "5"],
+        ["BW4839455", "8", "0", "24 hours", "2"],
+        ["BW4787613", "7", "0", "23 hours", "3"],
+        ["BW4500936", "7", "0", "209 hours", "2"],
+        ["BW4540096", "8", "1", "463 hours", "4"]
+      ]
+    }
+  },
+
+  {"type": "content", "title": "#2: Follow-Up Chain Example (BW4787613)",
+    "bullets": [
+      "4 messages from 2 ops members within 1.5 hours — all chasing the same unresponsive operator"
+    ],
+    "quotes": [
+      "\"BW4787613 As there is no update from pax and no ticket attached, we will refund.\" — Thanah, 04:33",
+      "\"BW4787613 hi @operator Did they reply you directly since here is no update?\" — Nine09, 05:19",
+      "\"Hi @operator pls help check for this booking as well.\" — Nine09, 05:43",
+      "\"BW4787613 Okay since there is no update... We will refund shortly.\" — Nine09, 06:04"
+    ]
+  },
+
+  {"type": "content", "title": "#3: Cancellation & Refund Coordination",
+    "callout": "1,158 ops messages (20.6% of outbound) — HIGH severity",
+    "bullets": [
+      {"text": "Two distinct workflows requiring different solutions:", "sub_bullets": [
+        "A. Ops-initiated: customer requests relayed from Zendesk to operator",
+        "B. Operator-initiated: capacity blocks, weather, customer won't travel"
+      ]},
+      {"text": "Each cancellation/refund requires 5 steps:", "sub_bullets": [
+        "Read request → Check backoffice → Process in backoffice → Confirm to operator → Update Zendesk"
+      ]}
+    ],
+    "quotes": [
+      "\"ABM66312: Hi team, the customer is asking to cancel. Can we cancel and refund?\" — Anastasiia",
+      "\"12GO28367944 - We have closed sales for this route. Please proceed with cancellation and refund\" — Porr (operator)"
+    ]
+  },
+
+  {"type": "content", "title": "#4: Ticket Attachment Requests",
+    "callout": "659 text messages + 362 images — HIGH severity, VERY HIGH automation potential",
+    "bullets": [
+      "Almost entirely identical messages: [booking_id] + \"please attach the ticket\"",
+      "On one day, Kseniia sent 6 word-for-word identical requests to the same group within 30 minutes",
+      "Most automatable category — no human judgment needed"
+    ],
+    "quotes": [
+      "\"BW4887519 Dear team, please attach the ticket. Thank you!\" — Kseniia, 16:18",
+      "\"BW4887487 Dear team, please attach the ticket. Thank you!\" — Kseniia, 16:17",
+      "\"BW4887320 Dear team, please attach the ticket. Thank you!\" — Kseniia, 16:14"
+    ]
+  },
+
+  {"type": "content", "title": "#5: Multi-Group Context Switching",
+    "callout": "80 WhatsApp groups — top ops members juggle 20-33 groups daily",
+    "bullets": [
+      "Constant context-switching between operators, booking IDs, and conversation threads"
+    ],
+    "table": {
+      "headers": ["Operator Group", "Total Msgs", "Ops Sent", "Ops:Operator Ratio"],
+      "rows": [
+        ["Stef Lanka (Sri Lanka)", "2,644", "1,162", "0.78"],
+        ["Hepton Tours (Egypt)", "1,459", "1,031", "2.47"],
+        ["RG Adventure", "823", "205", "0.33"],
+        ["Ride Transfer", "733", "329", "0.81"],
+        ["Otobeas (Morocco)", "662", "318", "0.92"],
+        ["Family Service (Laos)", "634", "323", "1.04"]
+      ]
+    }
+  },
+
+  {"type": "content", "title": "#5: Highest Ops-to-Operator Ratios (Most Chasing)",
+    "bullets": [
+      "A ratio above 2.0 strongly indicates ops is chasing the operator more than being responded to"
+    ],
+    "table": {
+      "headers": ["Operator", "Ops:Operator Ratio", "Interpretation"],
+      "rows": [
+        ["On time bus", "5.81:1", "Extreme — ops sends 6x more than operator replies"],
+        ["Arab travel/Ticket Hub", "2.69:1", "Heavy chasing"],
+        ["West bus", "2.69:1", "Heavy chasing"],
+        ["Hepton Tours", "2.47:1", "Heavy chasing"],
+        ["Myticket Morocco", "2.45:1", "Heavy chasing"]
+      ]
+    }
+  },
+
+  {"type": "content", "title": "#6: Customer Complaint Relay (Zendesk → WhatsApp)",
+    "callout": "73 ops messages — MEDIUM severity",
+    "bullets": [
+      {"text": "Each complaint relay requires:", "sub_bullets": [
+        "Read Zendesk ticket → Extract details → Find right WhatsApp group → Compose message → Follow up"
+      ]},
+      "High-effort, low-frequency — messages are often 100-200 words long"
+    ],
+    "quotes": [
+      "\"Dear Team, Booking ID: 28079373... The customer reported that they arrived 30 minutes before departure at Terminal Giwangan but could not find your bus...\" — Travelier Ops 14 (208 words)"
+    ]
+  },
+
+  {"type": "content", "title": "#7: Operator-Initiated Requests Creating Reactive Work",
+    "callout": "MEDIUM severity — operators message ops with cancellations, capacity alerts, schedule changes",
+    "bullets": [
+      {"text": "Three main triggers:", "sub_bullets": [
+        "Fully booked / capacity blocks",
+        "Bad weather cancellations",
+        "Customer-won't-travel cancellations"
+      ]},
+      "Each requires manual backoffice update, refund processing, and customer notification",
+      "Operators like RG Adventure send multiple \"fully booked, please cancel\" daily (3-6 bookings at a time)"
+    ],
+    "quotes": [
+      "\"12GO28345868 12GO28344290 The ticket are fully booked please cancel.\" — Waeo Yuwari",
+      "\"FAJNXQX - Dear Team, please kindly cancel and refund this customer because the boat will not operate due to Nyepi day\" — Jasmine"
+    ]
+  },
+
+  {"type": "section", "title": "Automation Recommendations"},
+
+  {"type": "content", "title": "Priority 1: Auto-Send Confirmation Requests",
+    "callout": "~1,500 messages eliminated  |  Effort: Low",
+    "bullets": [
+      "When a booking is created in the backoffice, auto-send \"please confirm [booking_id]\" to the operator's WhatsApp group",
+      "No human judgment needed — booking ID, operator group, and template are all deterministic"
+    ]
+  },
+
+  {"type": "content", "title": "Priority 2: Auto-Send Ticket Attachment Requests",
+    "callout": "~660 messages eliminated  |  Effort: Low",
+    "bullets": [
+      "When a booking is confirmed but no ticket attached, auto-send request to operator group",
+      "Include timed escalation: reminder after 2 hours, flag for ops after 4 hours"
+    ]
+  },
+
+  {"type": "content", "title": "Priority 3: Automated Follow-Up Escalation",
+    "callout": "~250+ messages eliminated, prevents multi-person chasing  |  Effort: Medium",
+    "bullets": [
+      "If no operator response after X hours, auto-send follow-up",
+      "If still no response, escalate to ops for manual intervention",
+      "Prevents the pattern where 3-5 ops members independently chase the same booking"
+    ]
+  },
+
+  {"type": "content", "title": "Priority 4: Operator Cancellation Self-Service",
+    "callout": "Reduces reactive ops work significantly  |  Effort: Medium-High",
+    "bullets": [
+      "Provide operators with a portal or bot to submit \"fully booked\" / \"bad weather\" / \"cancel request\"",
+      "Auto-updates backoffice and triggers customer notifications",
+      "Eliminates manual bridging of every operator cancellation message"
+    ]
+  },
+
+  {"type": "content", "title": "Priority 5: Booking Thread Visibility Dashboard",
+    "callout": "Prevents duplicate follow-ups, improves coordination  |  Effort: Medium",
+    "bullets": [
+      "Dashboard showing: who last messaged, when, operator response status",
+      "Solves the root cause of 4-5 people chasing the same booking",
+      "Currently ops members have zero visibility into colleague activity"
+    ]
+  },
+
+  {"type": "content", "title": "Priority 6: Zendesk-to-WhatsApp Integration",
+    "callout": "Reduces complaint relay time  |  Effort: High",
+    "bullets": [
+      "Auto-extract booking ID and complaint summary from Zendesk tickets",
+      "Draft or send message to appropriate operator WhatsApp group",
+      "Eliminates manual copy-paste workflow for complaint relay"
+    ]
+  },
+
+  {"type": "section", "title": "Operator Responsiveness & Workload Patterns"},
+
+  {"type": "content", "title": "Operator Responsiveness Scorecard",
+    "bullets": [
+      "Based on ops:operator message ratio — higher ratio means more chasing by ops"
+    ],
+    "table": {
+      "headers": ["Risk Level", "Operators", "Ratio Range"],
+      "rows": [
+        ["Critical (heavy chasing)", "On time bus, Arab travel/Ticket Hub, West bus", ">2.5:1"],
+        ["Warning (moderate chasing)", "Hepton Tours, Myticket, AB Maritime, Trip Egypt, Laos Group Tour", "1.5-2.5:1"],
+        ["Healthy", "Stef Lanka, Wijaya Buyuk, Family Service, Otobeas", "0.8-1.2:1"],
+        ["Operator-driven (high inbound)", "RG Adventure, Mekong Transfer, Atoll Transfer", "<0.5:1"]
+      ]
+    }
+  },
+
+  {"type": "content", "title": "Daily Workload Patterns",
+    "callout": "No quiet days — sustained high volume 7 days a week",
+    "bullets": [
+      {"text": "Weekday average: ~370 total messages/day", "sub_bullets": ["Ops sends ~175, receives ~195"]},
+      {"text": "Weekend average: ~270 total messages/day", "sub_bullets": ["Ops sends ~130, receives ~140"]},
+      "Peak day: 435 messages (2026-02-09 and 2026-03-05)",
+      "Lowest day: 249 messages (2026-02-20)"
+    ]
+  },
+
+  {"type": "section", "title": "Key Takeaways"},
+
+  {"type": "content", "title": "Key Findings Summary",
+    "bullets": [
+      {"text": "37% of ops outbound = confirmations + ticket requests", "sub_bullets": ["Highly templated, highly automatable"]},
+      {"text": "Unresponsive operators are the #1 time sink", "sub_bullets": ["Worst cases: 12 ops messages, 0 replies, 10+ days"]},
+      {"text": "Multiple ops members chase the same booking", "sub_bullets": ["Lack of thread visibility causes duplicate work"]},
+      {"text": "Cancellation/refund work is split", "sub_bullets": ["Ops-initiated (customer requests) and operator-initiated (capacity/weather) need different solutions"]},
+      "80 WhatsApp groups create severe context-switching — top ops members juggle 20-33 groups daily",
+      "No proactive alerting — ops must manually check backoffice to know which bookings need action"
+    ]
+  }
+]
