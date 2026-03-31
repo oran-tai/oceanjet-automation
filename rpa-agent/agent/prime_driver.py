@@ -567,10 +567,12 @@ class PrimeDriver:
         logger.info(f"Result dialog text: {dialog_text}")
 
         if "Process Complete" in dialog_text or "Ticket number" in dialog_text:
-            # Success — extract ticket numbers from brackets [XXXXXXXX]
-            # Extract ticket numbers — handles both [12345678] (one-way)
-            # and [13023072,13023073] (round-trip, comma-separated in one bracket pair)
-            ticket_numbers = re.findall(r"\d{7,}", dialog_text)
+            # Extract ticket numbers from inside brackets only: [12345678] or [13063463,13063464]
+            # This avoids matching the build number in "Build 20231109E"
+            bracket_content = re.findall(r"\[([^\]]+)\]", dialog_text)
+            ticket_numbers = []
+            for content in bracket_content:
+                ticket_numbers.extend(re.findall(r"\d{7,}", content))
             logger.info(f"Ticket number(s) captured: {ticket_numbers}")
 
             # Click OK to close the success dialog
@@ -662,43 +664,65 @@ class PrimeDriver:
         return dialog.window_text()
 
     def _close_print_preview(self, desktop):
-        """Close the print preview window that appears after issuing a ticket."""
+        """Close print preview windows that appear after issuing a ticket.
+
+        Round-trip bookings generate 2 print previews (departure + return).
+        We loop until no more previews appear.
+        """
         time.sleep(3)
-        try:
-            # Try common print preview window titles
-            for title_pattern in ["Print Preview", "Preview", "Report"]:
-                try:
-                    preview = desktop.window(title_re=f".*{title_pattern}.*")
-                    if preview.exists(timeout=3):
-                        logger.info(f"Closing print preview: {preview.window_text()}")
-                        preview.close()
-                        time.sleep(0.5)
-                        return
-                except Exception:
-                    continue
+        closed_count = 0
+        max_previews = 3  # Safety limit
 
-            # Fallback: look for any new window that isn't PRIME main or known dialogs
-            windows = desktop.windows()
-            for w in windows:
-                try:
-                    title = w.window_text()
-                    if (title and
-                        "OCEAN FAST FERRIES" not in title and
-                        title not in ("", "Confirm", "Program Manager") and
-                        "Start" not in title):
-                        rect = w.rectangle()
-                        width = rect.right - rect.left
-                        if width > 400:  # Print preview is likely a sizeable window
-                            logger.info(f"Closing unexpected window: {title}")
-                            w.close()
-                            time.sleep(0.5)
-                            return
-                except Exception:
-                    continue
+        while closed_count < max_previews:
+            found = False
+            try:
+                # Try common print preview window titles
+                for title_pattern in ["Print Preview", "Preview", "Report"]:
+                    try:
+                        preview = desktop.window(title_re=f".*{title_pattern}.*")
+                        if preview.exists(timeout=3):
+                            logger.info(f"Closing print preview: {preview.window_text()}")
+                            preview.close()
+                            time.sleep(1)
+                            closed_count += 1
+                            found = True
+                            break
+                    except Exception:
+                        continue
 
+                if not found:
+                    # Fallback: look for any new window that isn't PRIME main or known dialogs
+                    windows = desktop.windows()
+                    for w in windows:
+                        try:
+                            title = w.window_text()
+                            if (title and
+                                "OCEAN FAST FERRIES" not in title and
+                                title not in ("", "Confirm", "Program Manager") and
+                                "Start" not in title):
+                                rect = w.rectangle()
+                                width = rect.right - rect.left
+                                if width > 400:
+                                    logger.info(f"Closing unexpected window: {title}")
+                                    w.close()
+                                    time.sleep(1)
+                                    closed_count += 1
+                                    found = True
+                                    break
+                        except Exception:
+                            continue
+
+                if not found:
+                    break
+
+            except Exception as e:
+                logger.warning(f"Failed to close print preview: {e}")
+                break
+
+        if closed_count == 0:
             logger.info("No print preview window found to close")
-        except Exception as e:
-            logger.warning(f"Failed to close print preview: {e}")
+        else:
+            logger.info(f"Closed {closed_count} print preview(s)")
 
     def _handle_error_dialog(self, error_dlg) -> list[str]:
         """Handle a PRIME validation error dialog. Always raises PrimeError."""
