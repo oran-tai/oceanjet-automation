@@ -81,25 +81,36 @@ function isDepartureWithinWindow(departureDateStr: string): boolean {
 }
 
 /**
+ * Group a flat ticket array into per-passenger strings.
+ * e.g., ["t1", "t2", "t3", "t4"] with 2 passengers → ["t1 t2", "t3 t4"]
+ *
+ * For one-way / round-trip: 1 ticket per passenger → ["t1", "t2"]
+ * For connecting: 2 tickets per passenger (leg1 + leg2) → ["t1 t2", "t3 t4"]
+ */
+function groupTicketsByPassenger(tickets: string[], passengerCount: number): string[] {
+  if (tickets.length === 0) return [];
+  const ticketsPerPax = Math.floor(tickets.length / passengerCount);
+  if (ticketsPerPax <= 1) return tickets;
+
+  const grouped: string[] = [];
+  for (let i = 0; i < tickets.length; i += ticketsPerPax) {
+    grouped.push(tickets.slice(i, i + ticketsPerPax).join(' '));
+  }
+  return grouped;
+}
+
+/**
  * Build the Bookaway approval payload from ticket results.
  */
 function buildApprovalPayload(
   departureTickets: string[],
-  returnTickets: string[]
+  returnTickets: string[],
+  passengerCount: number
 ): ApprovalRequest {
-  // Interleave departure and return tickets by passenger for booking code
-  // e.g., [dep1, ret1, dep2, ret2] — matches Bookaway admin display order
-  const allTickets: string[] = [];
-  for (let i = 0; i < departureTickets.length; i++) {
-    allTickets.push(departureTickets[i]);
-    if (returnTickets[i]) {
-      allTickets.push(returnTickets[i]);
-    }
-  }
-  // Append any remaining return tickets (shouldn't happen, but safe)
-  for (let i = departureTickets.length; i < returnTickets.length; i++) {
-    allTickets.push(returnTickets[i]);
-  }
+  const allTickets = [...departureTickets, ...returnTickets];
+  const depSeats = groupTicketsByPassenger(departureTickets, passengerCount);
+  const retSeats = groupTicketsByPassenger(returnTickets, passengerCount);
+
   return {
     extras: [],
     pickups: [{ time: 0, location: null }],
@@ -108,11 +119,11 @@ function buildApprovalPayload(
     approvalInputs: {
       bookingCode: allTickets.join(' '),
       departureTrip: {
-        seatsNumber: departureTickets,
+        seatsNumber: depSeats,
         ticketsQrCode: [],
       },
       returnTrip: {
-        seatsNumber: returnTickets,
+        seatsNumber: retSeats,
         ticketsQrCode: [],
       },
     },
@@ -266,17 +277,29 @@ export async function processBooking(
     // 8. Approve on Bookaway
     const approval = buildApprovalPayload(
       ticketResult.departureTickets,
-      ticketResult.returnTickets
+      ticketResult.returnTickets,
+      translated.passengers.length
     );
 
+    logger.info('Approving booking', { bookingId });
     let approveAttempts = 0;
     const maxRetries = 3;
     while (approveAttempts < maxRetries) {
+      const attemptStart = Date.now();
       try {
         await client.approveBooking(bookingId, approval);
+        logger.info(`Approval succeeded (attempt ${approveAttempts + 1})`, {
+          reference,
+          durationMs: Date.now() - attemptStart,
+        });
         break;
       } catch (error: any) {
         approveAttempts++;
+        logger.warn(`Approval attempt ${approveAttempts} failed`, {
+          reference,
+          error: error.message,
+          durationMs: Date.now() - attemptStart,
+        });
         if (approveAttempts >= maxRetries) {
           // Approval failed after retries — keep claimed, alert
           await notifyBookingFailure(
@@ -295,10 +318,6 @@ export async function processBooking(
             reason: `Approval failed: ${error.message}`,
           };
         }
-        logger.warn(`Approval attempt ${approveAttempts} failed, retrying...`, {
-          reference,
-          error: error.message,
-        });
       }
     }
 
