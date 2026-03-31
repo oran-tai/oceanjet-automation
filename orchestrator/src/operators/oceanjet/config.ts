@@ -11,6 +11,7 @@ export const STATION_CODES: Record<string, string> = {
   'siquijor': 'SIQ',
   'maasin city, leyte': 'MAA',
   'surigao': 'SUR',
+  'surigao city, mindanao island': 'SUR',
   // Reference sheet names (for completeness)
   'tagbilaran': 'TAG',
   'bohol / tagbilaran': 'TAG',
