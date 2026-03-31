@@ -671,7 +671,7 @@ class PrimeDriver:
         """
         time.sleep(3)
         closed_count = 0
-        max_previews = 3  # Safety limit
+        max_previews = 2  # One-way = 1, round-trip = 2
 
         while closed_count < max_previews:
             found = False
