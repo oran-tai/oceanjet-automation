@@ -1,6 +1,6 @@
 # OceanJet Automation — Implementation Status
 
-**Last updated:** March 22, 2026
+**Last updated:** March 31, 2026
 
 ---
 
@@ -102,7 +102,7 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
 - Voyage selection via PIL ImageGrab screenshot → Gemini Flash vision API
 - Issue button click → Confirm dialog (Yes) → success dialog capture → ticket number extraction
 - Dialog text reading via Gemini Vision screenshot (Delphi paints text directly, not accessible via UIA)
-- Print preview auto-close after each ticket issuance
+- Print preview auto-close after each ticket issuance (loops only for expected count: 1 for one-way, 2 for round-trip)
 - Handles all 4 booking types (one-way, round-trip, connecting-one-way, connecting-round-trip)
 - Error detection: all 12 error codes implemented
 - Critical safety: failed ticket capture after Confirm → RPA_INTERNAL_ERROR (system-level stop)
@@ -112,6 +112,10 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
 - Both services run on same VM (localhost:8080)
 - One-click VM deployment via `setup.ps1` + `update-oceanjet` command
 - FastAPI HTTP server with bearer token auth
+- **Multi-passenger optimizations** (March 31, 2026):
+  - Voyage-only mode: pax 2+ on same leg skip redundant trip field filling (trip type, dates, stations, accommodation already retained after Refresh)
+  - Gemini Vision cache: parsed grid rows cached by `origin|destination|date` — pax 2+ reuse cached rows, skipping screenshot + API call
+  - Both scoped per `fill_booking()` call — each booking starts fresh, no cross-booking leakage
 
 **Error Code Status (12 total):**
 

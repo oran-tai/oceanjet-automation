@@ -1,6 +1,6 @@
 # OceanJet Automation — System Design
 
-**Last updated:** March 23, 2026
+**Last updated:** March 31, 2026
 
 ---
 
@@ -215,11 +215,28 @@ The agent must map what it observes in PRIME's UI to one of these error codes:
 11. Click **Issue** → **Confirm Yes**
 12. Wait 3s for result dialog → screenshot → **Gemini Flash Vision** → extract ticket number from "Process Complete. Ticket number(s): [XXXXXXXX]."
 13. Click **OK** to dismiss success dialog
-14. Wait 3s → close **Print Preview** window ("Report Preview : Purchase Request")
+14. Wait 3s → close **Print Preview** window(s) — only loops for expected count (1 for one-way, 2 for round-trip)
 
 Repeat for each passenger. For connecting routes, repeat for each leg. For round-trip connecting, repeat for all 4 legs.
 
 **Critical safety**: If step 12 fails to capture a ticket number after Confirm Yes (ticket is already issued), the RPA raises `RPA_INTERNAL_ERROR` (system-level stop) to prevent duplicate tickets.
+
+### Multi-Passenger Optimizations
+
+For passengers 2+ on the **same leg** (non-connecting bookings), the RPA skips redundant work:
+
+- **Voyage-only mode**: After Refresh, trip fields (type, dates, origin, destination, accommodation) are retained from the previous passenger. Steps 2-5 and 8 are skipped — only voyage search + selection is performed (steps 6-7).
+- **Gemini Vision cache**: Parsed voyage grid rows are cached by `origin|destination|date`. For passengers on the same route+date, the screenshot + Gemini API call is skipped and cached rows are reused. Keyboard navigation to select the row still runs.
+
+These optimizations apply differently by booking type:
+
+| Booking type | Voyage-only mode | Gemini cache |
+|---|---|---|
+| One-way, N pax | Pax 2+ skip trip fields | Pax 2+ use cached grid |
+| Round-trip, N pax | Pax 2+ skip trip fields | Pax 2+ use cached grid (dep + ret) |
+| Connecting, N pax | Never (legs alternate) | Pax 2+ use cached grid per leg |
+
+Cache and voyage-only state are scoped to a single `fill_booking()` call — each booking starts fresh.
 
 ## Deployment
 
@@ -296,7 +313,7 @@ For each poll cycle, the orchestrator:
    b. Fetches full booking details
    c. **Re-checks status is still `pending`** — skips if status changed (e.g., manually approved)
    d. Validates passengers (name, age, gender) pre-PRIME — fails with `PASSENGER_VALIDATION_ERROR` if invalid
-   e. Validates departure is within PRIME's 1-month booking window
+   e. Validates departure is within PRIME's 2-month booking window
    f. Translates to OceanJet PRIME format (mapper resolves station codes, accommodation, connecting routes, 24h→12h time)
    g. Sends to RPA agent via POST `localhost:8080/issue-tickets`
    h. On success: approves on Bookaway (with 3x retry)
@@ -310,7 +327,7 @@ For each poll cycle, the orchestrator:
 The mapper (`orchestrator/src/operators/oceanjet/mapper.ts`) handles:
 
 - **Booking type detection**: one-way, round-trip (via `misc.returnDepartureDate`), connecting (via route lookup), connecting-round-trip
-- **Station codes**: 20 Bookaway city names → 18 PRIME codes (some cities have multiple API names, e.g., "Bohol" and "Tagbilaran City, Bohol Island" both → TAG)
+- **Station codes**: Bookaway city names → PRIME codes (some cities have multiple API names, e.g., "Bohol" and "Tagbilaran City, Bohol Island" both → TAG, "Calapan" and "Calapan, Mindoro Island" → CAL)
 - **Accommodation**: `product.lineClass` ("Tourist" → TC, "Business" → BC, "Open Air" → OA)
 - **Connecting routes**: 6 routes through TAG and MAA hubs, with hardcoded departure times per leg
 - **Passengers**: name from direct fields, age/gender from `extraInfos` by definition ID
