@@ -667,56 +667,29 @@ class PrimeDriver:
         """Close print preview windows that appear after issuing a ticket.
 
         Round-trip bookings generate 2 print previews (departure + return).
-        We loop until no more previews appear.
+        Only matches windows with known print preview titles to avoid
+        accidentally closing the PRIME Issue New Ticket tab.
         """
         time.sleep(3)
         closed_count = 0
-        max_previews = 2  # One-way = 1, round-trip = 2
 
-        while closed_count < max_previews:
+        # Try up to 2 times (round-trip has 2 previews)
+        for _ in range(2):
             found = False
-            try:
-                # Try common print preview window titles
-                for title_pattern in ["Print Preview", "Preview", "Report"]:
-                    try:
-                        preview = desktop.window(title_re=f".*{title_pattern}.*")
-                        if preview.exists(timeout=3):
-                            logger.info(f"Closing print preview: {preview.window_text()}")
-                            preview.close()
-                            time.sleep(1)
-                            closed_count += 1
-                            found = True
-                            break
-                    except Exception:
-                        continue
+            for title_pattern in ["Report Preview", "Print Preview", "Preview", "Report"]:
+                try:
+                    preview = desktop.window(title_re=f".*{title_pattern}.*")
+                    if preview.exists(timeout=3):
+                        logger.info(f"Closing print preview: {preview.window_text()}")
+                        preview.close()
+                        time.sleep(1)
+                        closed_count += 1
+                        found = True
+                        break
+                except Exception:
+                    continue
 
-                if not found:
-                    # Fallback: look for any new window that isn't PRIME main or known dialogs
-                    windows = desktop.windows()
-                    for w in windows:
-                        try:
-                            title = w.window_text()
-                            if (title and
-                                "OCEAN FAST FERRIES" not in title and
-                                title not in ("", "Confirm", "Program Manager") and
-                                "Start" not in title):
-                                rect = w.rectangle()
-                                width = rect.right - rect.left
-                                if width > 400:
-                                    logger.info(f"Closing unexpected window: {title}")
-                                    w.close()
-                                    time.sleep(1)
-                                    closed_count += 1
-                                    found = True
-                                    break
-                        except Exception:
-                            continue
-
-                if not found:
-                    break
-
-            except Exception as e:
-                logger.warning(f"Failed to close print preview: {e}")
+            if not found:
                 break
 
         if closed_count == 0:
