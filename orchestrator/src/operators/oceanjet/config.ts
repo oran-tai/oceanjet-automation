@@ -18,6 +18,7 @@ export const STATION_CODES: Record<string, string> = {
   'bacolod': 'BAC',
   'batangas': 'BAT',
   'calapan': 'CAL',
+  'calapan, mindoro island': 'CAL',
   'camotes': 'CAM',
   'estancia': 'EST',
   'getafe': 'GET',
