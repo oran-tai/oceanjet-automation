@@ -75,6 +75,15 @@ class PrimeDriver:
             title_re=" *Trip Type *", control_type="Pane"
         )
 
+    @staticmethod
+    def _leg_key(leg, trip_type, return_leg=None):
+        """Create a hashable key identifying a unique leg configuration."""
+        key = (leg["origin"], leg["destination"], leg["date"],
+               leg.get("time", ""), leg["accommodation"], trip_type)
+        if return_leg:
+            key += (return_leg["date"], return_leg.get("time", ""))
+        return key
+
     def _dismiss_same_station_dialog(self):
         """Dismiss the 'Origin and Destination must not be the same' error dialog.
 
@@ -110,7 +119,8 @@ class PrimeDriver:
                 f"Failed to click Refresh: {e}",
             )
 
-    def fill_trip_details(self, leg, trip_type: str, return_leg=None, connecting_arrival: str = None) -> dict:
+    def fill_trip_details(self, leg, trip_type: str, return_leg=None,
+                         connecting_arrival: str = None, voyage_only: bool = False) -> dict:
         """Fill the Trip Details pane.
 
         Args:
@@ -118,79 +128,94 @@ class PrimeDriver:
             trip_type: "One Way" or "Round Trip".
             return_leg: Optional dict for return trip details.
             connecting_arrival: Leg 1 arrival time for connecting leg 2 dynamic selection.
+            voyage_only: If True, skip trip type/dates/stations/accommodation
+                         (already set from previous passenger). Only search and select voyage.
 
         Returns:
             Dict with "voyage_number" and "arrival_time" from the selected voyage.
         """
-        logger.info(
-            f"Filling trip details: {leg['origin']}->{leg['destination']} "
-            f"on {leg['date']} at {leg['time']} ({trip_type})"
-        )
+        if voyage_only:
+            logger.info(
+                f"Filling trip details (voyage-only mode): {leg['origin']}->{leg['destination']} "
+                f"on {leg['date']} at {leg['time']} ({trip_type})"
+            )
+        else:
+            logger.info(
+                f"Filling trip details: {leg['origin']}->{leg['destination']} "
+                f"on {leg['date']} at {leg['time']} ({trip_type})"
+            )
+
         trip_details = self._get_trip_details_pane()
-        trip_type_pane = self._get_trip_type_pane()
-
-        # 1. Select trip type radio button
-        radio = trip_type_pane.child_window(
-            title=trip_type, control_type="RadioButton"
-        )
-        radio.click_input()
-        time.sleep(0.3)
-
-        edits = trip_details.children(control_type="Edit")
-        combos = trip_details.children(control_type="ComboBox")
         buttons = trip_details.children(control_type="Button")
 
-        # 2. Fill departure date (edit[1] in tree order)
-        prime_date = bookaway_date_to_prime(leg["date"])
-        departure_date_edit = edits[1]
-        departure_date_edit.click_input()
-        send_keys("{HOME}")
-        send_keys(prime_date, with_spaces=True)
-        time.sleep(0.3)
+        if not voyage_only:
+            trip_type_pane = self._get_trip_type_pane()
 
-        # 3. Fill return date if round-trip (edit[0])
-        if trip_type == "Round Trip" and return_leg:
-            logger.info(
-                f"Filling return date: {return_leg['date']}"
+            # 1. Select trip type radio button
+            radio = trip_type_pane.child_window(
+                title=trip_type, control_type="RadioButton"
             )
-            return_date = bookaway_date_to_prime(return_leg["date"])
-            return_date_edit = edits[0]
-            return_date_edit.click_input()
-            send_keys("{HOME}")
-            send_keys(return_date, with_spaces=True)
+            radio.click_input()
             time.sleep(0.3)
 
-        # 4. Select origin (combo_box[2])
-        origin_combo = combos[2]
-        try:
-            origin_combo.select(leg["origin"])
-        except Exception:
-            raise PrimeError(
-                TicketErrorCode.STATION_NOT_FOUND,
-                f"Origin station '{leg['origin']}' not found in PRIME dropdown",
-            )
-        time.sleep(0.3)
-        self._dismiss_same_station_dialog()
+            edits = trip_details.children(control_type="Edit")
+            combos = trip_details.children(control_type="ComboBox")
 
-        # 5. Select destination (combo_box[1])
-        dest_combo = combos[1]
-        try:
-            dest_combo.select(leg["destination"])
-        except Exception:
-            raise PrimeError(
-                TicketErrorCode.STATION_NOT_FOUND,
-                f"Destination station '{leg['destination']}' not found in PRIME dropdown",
-            )
-        time.sleep(0.3)
-        self._dismiss_same_station_dialog()
+            # 2. Fill departure date (edit[1] in tree order)
+            prime_date = bookaway_date_to_prime(leg["date"])
+            departure_date_edit = edits[1]
+            departure_date_edit.click_input()
+            send_keys("{HOME}")
+            send_keys(prime_date, with_spaces=True)
+            time.sleep(0.3)
+
+            # 3. Fill return date if round-trip (edit[0])
+            if trip_type == "Round Trip" and return_leg:
+                logger.info(
+                    f"Filling return date: {return_leg['date']}"
+                )
+                return_date = bookaway_date_to_prime(return_leg["date"])
+                return_date_edit = edits[0]
+                return_date_edit.click_input()
+                send_keys("{HOME}")
+                send_keys(return_date, with_spaces=True)
+                time.sleep(0.3)
+
+            # 4. Select origin (combo_box[2])
+            origin_combo = combos[2]
+            try:
+                origin_combo.select(leg["origin"])
+            except Exception:
+                raise PrimeError(
+                    TicketErrorCode.STATION_NOT_FOUND,
+                    f"Origin station '{leg['origin']}' not found in PRIME dropdown",
+                )
+            time.sleep(0.3)
+            self._dismiss_same_station_dialog()
+
+            # 5. Select destination (combo_box[1])
+            dest_combo = combos[1]
+            try:
+                dest_combo.select(leg["destination"])
+            except Exception:
+                raise PrimeError(
+                    TicketErrorCode.STATION_NOT_FOUND,
+                    f"Destination station '{leg['destination']}' not found in PRIME dropdown",
+                )
+            time.sleep(0.3)
+            self._dismiss_same_station_dialog()
 
         # 6. Click departure voyage search button (button[1])
         voyage_search_btn = buttons[1]
         voyage_search_btn.click_input()
         time.sleep(1)
 
-        # 7. Select departure voyage via Gemini Vision
-        voyage_result = self.select_voyage(leg["time"], connecting_arrival=connecting_arrival)
+        # 7. Select departure voyage via Gemini Vision (with caching)
+        dep_cache_key = f"{leg['origin']}|{leg['destination']}|{leg['date']}"
+        voyage_result = self.select_voyage(
+            leg["time"], connecting_arrival=connecting_arrival,
+            cache_key=dep_cache_key,
+        )
         logger.info(f"Selected departure voyage: {voyage_result['voyage_number']}")
         time.sleep(0.5)
 
@@ -204,21 +229,26 @@ class PrimeDriver:
             return_search_btn.click_input()
             time.sleep(1)
 
-            # Select return voyage via Gemini Vision
-            return_voyage_result = self.select_voyage(return_leg["time"])
+            # Select return voyage via Gemini Vision (with caching)
+            ret_cache_key = f"{return_leg['origin']}|{return_leg['destination']}|{return_leg['date']}"
+            return_voyage_result = self.select_voyage(
+                return_leg["time"], cache_key=ret_cache_key,
+            )
             logger.info(f"Selected return voyage: {return_voyage_result['voyage_number']}")
             time.sleep(0.5)
 
-        # 9. Select accommodation (combo_box[0])
-        accom_combo = combos[0]
-        try:
-            accom_combo.select(leg["accommodation"])
-        except Exception:
-            raise PrimeError(
-                TicketErrorCode.ACCOMMODATION_UNAVAILABLE,
-                f"Accommodation '{leg['accommodation']}' not found in PRIME dropdown",
-            )
-        time.sleep(0.3)
+        if not voyage_only:
+            # 9. Select accommodation (combo_box[0])
+            combos = trip_details.children(control_type="ComboBox")
+            accom_combo = combos[0]
+            try:
+                accom_combo.select(leg["accommodation"])
+            except Exception:
+                raise PrimeError(
+                    TicketErrorCode.ACCOMMODATION_UNAVAILABLE,
+                    f"Accommodation '{leg['accommodation']}' not found in PRIME dropdown",
+                )
+            time.sleep(0.3)
 
         return voyage_result
 
@@ -249,13 +279,77 @@ class PrimeDriver:
         send_keys("%{F4}")
         time.sleep(0.5)
 
-    def select_voyage(self, target_time: str, connecting_arrival: str = None) -> dict:
+    def _parse_voyage_grid(self, voyage_dlg) -> list[dict]:
+        """Screenshot the Voyage Schedule dialog and parse rows via Gemini Vision."""
+        try:
+            from PIL import ImageGrab
+            rect = voyage_dlg.rectangle()
+            grid_image = ImageGrab.grab(bbox=(
+                rect.left, rect.top, rect.right, rect.bottom
+            ))
+        except Exception as e:
+            raise PrimeError(
+                TicketErrorCode.RPA_INTERNAL_ERROR,
+                f"Failed to capture Voyage Schedule screenshot: {e}",
+            )
+
+        prompt = (
+            "This is a screenshot of a voyage schedule grid from a ferry booking system. "
+            "Extract ALL rows from the grid as a JSON array. Each row should be an object with:\n"
+            '- "voyage_number": the voyage number (e.g., "OJ884A")\n'
+            '- "departure_time": the departure date/time (e.g., "3/27/2026 7:30:00 AM")\n'
+            '- "arrival_time": the arrival date/time (e.g., "3/27/2026 9:30:00 AM")\n'
+            '- "origin": origin code\n'
+            '- "destination": destination code\n\n'
+            "Return ONLY the JSON array, no other text. "
+            "If the grid is empty (no data rows), return an empty array []."
+        )
+
+        img_buffer = io.BytesIO()
+        grid_image.save(img_buffer, format="PNG")
+        image_bytes = img_buffer.getvalue()
+
+        try:
+            response = self.gemini_client.models.generate_content(
+                model="gemini-flash-latest",
+                contents=[
+                    prompt,
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+                ],
+            )
+        except Exception as e:
+            raise PrimeError(
+                TicketErrorCode.RPA_INTERNAL_ERROR,
+                f"Gemini Vision API call failed: {e}",
+            )
+
+        import json
+
+        response_text = response.text.strip()
+        if response_text.startswith("```"):
+            lines = response_text.split("\n")
+            response_text = "\n".join(lines[1:-1])
+
+        try:
+            grid_rows = json.loads(response_text)
+        except json.JSONDecodeError as e:
+            raise PrimeError(
+                TicketErrorCode.RPA_INTERNAL_ERROR,
+                f"Failed to parse Gemini Vision response: {e}\nResponse: {response_text}",
+            )
+
+        return grid_rows
+
+    def select_voyage(self, target_time: str, connecting_arrival: str = None,
+                      cache_key: str = None) -> dict:
         """Select a voyage from the Voyage Schedule dialog using Gemini Vision.
 
         Args:
             target_time: Target departure time, e.g. "1:00 PM".
                          If empty and connecting_arrival is set, uses 20-120 min rule.
             connecting_arrival: Leg 1 arrival time for connecting route leg 2 selection.
+            cache_key: If set, cache/reuse parsed grid rows under this key
+                       to avoid redundant Gemini API calls for the same route+date.
 
         Returns:
             Dict with "voyage_number" and "arrival_time".
@@ -276,68 +370,16 @@ class PrimeDriver:
                 f"Voyage Schedule dialog did not appear: {e}",
             )
 
-        # Capture screenshot of the dialog using PIL ImageGrab
-        # (more reliable than capture_as_image with 32-bit Delphi apps)
-        try:
-            from PIL import ImageGrab
-            rect = voyage_dlg.rectangle()
-            grid_image = ImageGrab.grab(bbox=(
-                rect.left, rect.top, rect.right, rect.bottom
-            ))
-        except Exception as e:
-            raise PrimeError(
-                TicketErrorCode.RPA_INTERNAL_ERROR,
-                f"Failed to capture Voyage Schedule screenshot: {e}",
-            )
-
-        # Send to Gemini Vision API for grid parsing
-        prompt = (
-            "This is a screenshot of a voyage schedule grid from a ferry booking system. "
-            "Extract ALL rows from the grid as a JSON array. Each row should be an object with:\n"
-            '- "voyage_number": the voyage number (e.g., "OJ884A")\n'
-            '- "departure_time": the departure date/time (e.g., "3/27/2026 7:30:00 AM")\n'
-            '- "arrival_time": the arrival date/time (e.g., "3/27/2026 9:30:00 AM")\n'
-            '- "origin": origin code\n'
-            '- "destination": destination code\n\n'
-            "Return ONLY the JSON array, no other text. "
-            "If the grid is empty (no data rows), return an empty array []."
-        )
-
-        # Convert PIL image to bytes for the Gemini API
-        img_buffer = io.BytesIO()
-        grid_image.save(img_buffer, format="PNG")
-        image_bytes = img_buffer.getvalue()
-
-        try:
-            response = self.gemini_client.models.generate_content(
-                model="gemini-flash-latest",
-                contents=[
-                    prompt,
-                    types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-                ],
-            )
-        except Exception as e:
-            raise PrimeError(
-                TicketErrorCode.RPA_INTERNAL_ERROR,
-                f"Gemini Vision API call failed: {e}",
-            )
-
-        # Parse the response
-        import json
-
-        response_text = response.text.strip()
-        # Strip markdown code fences if present
-        if response_text.startswith("```"):
-            lines = response_text.split("\n")
-            response_text = "\n".join(lines[1:-1])
-
-        try:
-            grid_rows = json.loads(response_text)
-        except json.JSONDecodeError as e:
-            raise PrimeError(
-                TicketErrorCode.RPA_INTERNAL_ERROR,
-                f"Failed to parse Gemini Vision response: {e}\nResponse: {response_text}",
-            )
+        # Check voyage cache before screenshotting + calling Gemini
+        if cache_key and hasattr(self, "_voyage_cache") and cache_key in self._voyage_cache:
+            grid_rows = self._voyage_cache[cache_key]
+            logger.info(f"Voyage cache hit for {cache_key} ({len(grid_rows)} rows)")
+        else:
+            grid_rows = self._parse_voyage_grid(voyage_dlg)
+            # Store in cache if key provided
+            if cache_key and hasattr(self, "_voyage_cache"):
+                self._voyage_cache[cache_key] = grid_rows
+                logger.info(f"Voyage cache stored for {cache_key} ({len(grid_rows)} rows)")
 
         if not grid_rows:
             self._close_voyage_dialog(voyage_dlg)
@@ -666,15 +708,17 @@ class PrimeDriver:
     def _close_print_preview(self, desktop):
         """Close print preview windows that appear after issuing a ticket.
 
-        Round-trip bookings generate 2 print previews (departure + return).
+        Uses self._expected_previews to know how many to look for:
+        - One-way / connecting legs: 1
+        - Round-trip: 2
         Only matches windows with known print preview titles to avoid
         accidentally closing the PRIME Issue New Ticket tab.
         """
+        expected = getattr(self, "_expected_previews", 1)
         time.sleep(3)
         closed_count = 0
 
-        # Try up to 2 times (round-trip has 2 previews)
-        for _ in range(2):
+        for _ in range(expected):
             found = False
             for title_pattern in ["Report Preview", "Print Preview", "Preview", "Report"]:
                 try:
@@ -820,6 +864,12 @@ class PrimeDriver:
         last_error_msg = None
         last_arrival_time = None  # For connecting routes: leg 1 arrival → leg 2 selection
 
+        # Optimization: track previous leg to skip redundant trip field filling
+        self._voyage_cache = {}
+        prev_leg_key = None
+        # Connecting routes alternate legs between tasks, so voyage_only never applies
+        is_connecting = booking_type.startswith("connecting")
+
         for pax_idx, pax, leg, trip_type, return_leg, label, leg_type in tasks:
             logger.info(f"--- {label} ---")
             try:
@@ -830,9 +880,21 @@ class PrimeDriver:
                 if not leg.get("time") and last_arrival_time:
                     connecting_arrival = last_arrival_time
 
+                # Determine if we can skip trip field filling (voyage-only mode)
+                current_leg_key = self._leg_key(leg, trip_type, return_leg)
+                voyage_only = (
+                    not is_connecting
+                    and prev_leg_key is not None
+                    and current_leg_key == prev_leg_key
+                )
+
+                # Set expected print previews for this task
+                self._expected_previews = 2 if leg_type == "round-trip" else 1
+
                 voyage_result = self.fill_trip_details(
                     leg, trip_type, return_leg=return_leg,
                     connecting_arrival=connecting_arrival,
+                    voyage_only=voyage_only,
                 )
 
                 # Store arrival time for connecting route leg 2 selection
@@ -862,6 +924,9 @@ class PrimeDriver:
                     for ticket_no in ticket_numbers:
                         departure_tickets.append(ticket_no)
 
+                # Update prev_leg_key after successful issuance
+                prev_leg_key = current_leg_key
+
             except PrimeError as e:
                 has_failure = True
                 last_error_code = e.error_code
@@ -872,6 +937,9 @@ class PrimeDriver:
                 logger.error(
                     f"FAILED {label}: [{e.error_code.value}] {e.message}"
                 )
+
+                # Reset prev_leg_key on error to force full fill on next task
+                prev_leg_key = None
 
                 # System-level errors: stop processing entirely
                 if e.error_code in SYSTEM_ERROR_CODES:
@@ -885,6 +953,10 @@ class PrimeDriver:
                 except Exception:
                     pass
                 break
+
+        # Clear per-booking state
+        self._voyage_cache = {}
+        self._expected_previews = 1
 
         partial_results = list(pax_results.values())
         any_success = any(r["success"] for r in partial_results)
