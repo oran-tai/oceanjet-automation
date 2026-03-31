@@ -166,7 +166,7 @@ The RPA agent classifies every failure into one of the following error codes. Th
 - Given the RPA agent returns a booking-level error code (`STATION_NOT_FOUND`, `TRIP_NOT_FOUND`, `TRIP_SOLD_OUT`, `VOYAGE_TIME_MISMATCH`, `ACCOMMODATION_UNAVAILABLE`, `PASSENGER_VALIDATION_ERROR`, `DUPLICATE_PASSENGER`, `DATE_BLACKOUT`, `PRIME_VALIDATION_ERROR`, or `UNKNOWN_ERROR`), then the system releases the booking on Bookaway, sends a Slack alert with the booking reference, error code, human-readable description, and a link to the booking in Bookaway Admin, and **continues processing the next booking in the queue**.
 - Given the RPA agent returns a system-level error code (`PRIME_TIMEOUT`, `PRIME_CRASH`, `SESSION_EXPIRED`, or `RPA_INTERNAL_ERROR`), then the system releases the booking, sends a Slack alert, and **stops the automation entirely**. An agent must resolve the issue and restart.
 - Given the automation detects a PRIME logout or session expiry at any point, then it stops immediately and sends an alert to the dedicated Slack channel requesting manual re-login.
-- Given a booking's departure date is more than 1 month in the future (outside PRIME's booking window), then the system skips it and re-queues it for processing when the booking window opens.
+- Given a booking's departure date is more than 2 months in the future (outside PRIME's booking window), then the system skips it and re-queues it for processing when the booking window opens.
 - Given a multi-passenger booking where some passengers succeed but a subsequent passenger fails in PRIME (partial failure), then the system does **not** approve the booking and does **not** release it on Bookaway. Instead, the booking remains claimed (`inProgressBy` stays set), and the system sends an alert to the dedicated Slack channel with the booking reference, which passengers succeeded (with their ticket numbers), and which passenger failed (with the failure reason and error code). An agent must manually resolve the partial state.
 - The system must never approve a booking on Bookaway without having successfully issued all required tickets in PRIME.
 - All Slack alerts must include the error code (e.g., `TRIP_SOLD_OUT`) alongside the human-readable description so agents can quickly identify the failure type.
@@ -301,7 +301,7 @@ The "last mile" that actually issues tickets on the operator's system. For Ocean
 
 - **PRIME is noted as "a little bit slow."** The automation must account for variable load times with intelligent waits rather than fixed delays.
 - **Each PRIME bot instance requires a separate license.** Scaling to handle peak volumes (~600 tickets/day) may require multiple parallel bot instances.
-- **PRIME's 1-month booking window.** Bookings for departures >1 month out must be deferred and retried.
+- **PRIME's 2-month booking window.** Bookings for departures >2 months out must be deferred and retried.
 - **Ticket number capture uses Gemini Vision.** PRIME's success dialog is a Delphi VCL window that paints text directly on the window surface — the text is not accessible via Windows UI Automation (UIA). The RPA agent captures a screenshot of the dialog and sends it to Gemini Flash's vision API to extract the ticket number. This is the same approach used for reading the voyage schedule grid. If Gemini fails to extract the ticket number after a successful issuance (Confirm → Yes already clicked), the RPA raises `RPA_INTERNAL_ERROR` (system-level stop) to prevent duplicate tickets.
 
 ### Data Mapping Tables (Static Configuration)
@@ -316,12 +316,14 @@ The "last mile" that actually issues tickets on the operator's system. For Ocean
 | Bacolod | BAC |
 | Batangas | BAT |
 | Calapan | CAL |
+| Calapan, Mindoro Island | CAL |
 | Camotes | CAM |
 | Dumaguete | DUM |
 | Estancia | EST |
 | Bohol / Jetafe (Getafe) | GET |
 | Iligan | ILI |
 | Iloilo | ILO |
+| Iloilo, Panay Island | ILO |
 | Larena, Siquijor | SIQ |
 | Ormoc | ORM |
 | Ormoc, Leyte | ORM |
@@ -331,6 +333,7 @@ The "last mile" that actually issues tickets on the operator's system. For Ocean
 | Maasin | MAA |
 | Maasin City, Leyte | MAA |
 | Surigao | SUR |
+| Surigao City, Mindanao Island | SUR |
 | Palompon, Leyte | PAL |
 
 *Note: Some cities appear with multiple names in the Bookaway API (e.g., "Bohol" and "Tagbilaran City, Bohol Island" both map to TAG). All confirmed variants are included above.*
@@ -367,7 +370,7 @@ The "last mile" that actually issues tickets on the operator's system. For Ocean
 | **PRIME latency/timeouts cause failures** | High | Medium — bookings fall back to manual | Implement intelligent retry logic with exponential backoff. Set conservative timeouts. Log all timing data. |
 | **Peak volume exceeds single bot capacity** | Medium | Medium — processing delays | Design for multi-bot parallelism from day one. Each bot uses its own PRIME license. |
 | **Connecting route logic errors** | Low | High — wrong tickets issued | Hardcode connecting route table with strict validation. Log every leg separately. Include connecting route test cases in QA. |
-| **Booking window timing issues** | Low | Low — bookings deferred | Implement date-check logic: skip bookings with departure > 1 month out, re-queue for daily retry. |
+| **Booking window timing issues** | Low | Low — bookings deferred | Implement date-check logic: skip bookings with departure > 2 months out, re-queue for daily retry. |
 
 ---
 
@@ -405,8 +408,9 @@ No blocking questions remain.
 - **Actual phasing (updated to reflect implementation):**
   - **Phase 1 (Complete):** TypeScript orchestrator — Bookaway API client, data mapper (all 4 booking types), booking processor, polling loop, Slack alerts, mock operator. 47 unit tests passing.
   - **Phase 2 (Complete):** Python RPA agent — pywinauto + Gemini Vision driving PRIME desktop app. Form fill, voyage selection, ticket issuance, ticket number capture, print preview handling, error detection (11/12 error codes). First production E2E booking completed March 22, 2026.
-  - **Phase 3 (Next):** Multi-booking continuous mode, round-trip testing, SESSION_EXPIRED detection, events table → BigQuery.
-- All 4 booking types (one-way, round-trip, connecting-one-way, connecting-round-trip) are supported in the orchestrator. One-way bookings have been validated end-to-end in production.
+  - **Phase 2.5 (Complete):** Multi-passenger RPA optimizations (March 31, 2026) — voyage-only mode skips redundant trip field filling for pax 2+ on same leg; Gemini Vision cache reuses parsed grid rows by route+date; print preview close only loops for expected count. Saves ~3-4s per skipped Gemini call and ~2s per skipped trip fill.
+  - **Phase 3 (Next):** Multi-booking continuous mode, SESSION_EXPIRED detection, events table → BigQuery.
+- All 4 booking types (one-way, round-trip, connecting-one-way, connecting-round-trip) are supported and validated in production.
 
 ---
 
