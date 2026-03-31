@@ -135,6 +135,13 @@ export async function startOrchestrator(
         await notifyPollCycleSummary(approved, skipped, bookingErrors, systemErrors);
       }
 
+      // TODO: Remove after first production validation — stop after first poll cycle
+      if (!config.targetBooking) {
+        logger.info('First poll cycle complete, stopping for validation');
+        running = false;
+        break;
+      }
+
       // Wait before next poll
       if (running) {
         await new Promise((resolve) =>
