@@ -26,6 +26,7 @@ export const STATION_CODES: Record<string, string> = {
   'bohol / jetafe': 'GET',
   'iligan': 'ILI',
   'iloilo': 'ILO',
+  'iloilo, panay island': 'ILO',
   'larena': 'SIQ',
   'larena, siquijor': 'SIQ',
   'ormoc': 'ORM',
