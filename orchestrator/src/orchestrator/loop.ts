@@ -3,14 +3,13 @@ import type { OperatorModule } from '../operators/types.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { processBooking } from './processor.js';
+import { notifyPollCycleSummary } from '../notifications/slack.js';
 
 export async function startOrchestrator(
   client: BookawayClient,
   operator: OperatorModule
 ): Promise<void> {
   let running = true;
-  /** In-memory duplicate detection set for the current session */
-  const processedBookingIds = new Set<string>();
 
   // Graceful shutdown
   const shutdown = () => {
@@ -29,6 +28,13 @@ export async function startOrchestrator(
   });
 
   while (running) {
+    // Reset per-cycle state
+    const processedBookingIds = new Set<string>();
+    const approved: string[] = [];
+    const skipped: string[] = [];
+    const bookingErrors: string[] = [];
+    const systemErrors: string[] = [];
+
     try {
       // Fetch pending bookings
       const bookings = await client.fetchPendingBookings();
@@ -75,6 +81,22 @@ export async function startOrchestrator(
           // Track as processed (regardless of result)
           processedBookingIds.add(booking._id);
 
+          // Track result for summary
+          switch (result.status) {
+            case 'approved':
+              approved.push(booking.reference);
+              break;
+            case 'skipped':
+              skipped.push(booking.reference);
+              break;
+            case 'booking-error':
+              bookingErrors.push(booking.reference);
+              break;
+            case 'system-error':
+              systemErrors.push(booking.reference);
+              break;
+          }
+
           // If targeting a specific booking, stop after processing it
           if (config.targetBooking) {
             logger.info('Target booking processed, stopping', { reference: booking.reference });
@@ -91,14 +113,26 @@ export async function startOrchestrator(
             break;
           }
         } catch (error: any) {
-          // Unexpected error in claim or process — treat as system error
-          logger.error('Unexpected error processing booking', {
+          // Unexpected error in claim or process — log and skip to next booking
+          logger.error('Unexpected error processing booking, skipping', {
             reference: booking.reference,
             error: error.message,
           });
-          running = false;
-          break;
+          processedBookingIds.add(booking._id);
+          bookingErrors.push(booking.reference);
         }
+      }
+
+      // Log poll cycle summary if any bookings were processed
+      const totalProcessed = approved.length + skipped.length + bookingErrors.length + systemErrors.length;
+      if (totalProcessed > 0) {
+        const parts: string[] = [];
+        if (approved.length > 0) parts.push(`Approved (${approved.length}): ${approved.join(', ')}`);
+        if (skipped.length > 0) parts.push(`Skipped (${skipped.length}): ${skipped.join(', ')}`);
+        if (bookingErrors.length > 0) parts.push(`Errors (${bookingErrors.length}): ${bookingErrors.join(', ')}`);
+        if (systemErrors.length > 0) parts.push(`System errors (${systemErrors.length}): ${systemErrors.join(', ')}`);
+        logger.info(`Poll cycle summary (${totalProcessed} processed):\n  ${parts.join('\n  ')}`);
+        await notifyPollCycleSummary(approved, skipped, bookingErrors, systemErrors);
       }
 
       // Wait before next poll

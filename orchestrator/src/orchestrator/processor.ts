@@ -58,7 +58,7 @@ function isDepartureWithinDays(departureDateStr: string, days: number): boolean 
 }
 
 /**
- * Check if departure date is within PRIME's 1-month booking window.
+ * Check if departure date is within PRIME's 2-month booking window.
  */
 function isDepartureWithinWindow(departureDateStr: string): boolean {
   // Bookaway format: "Wed, Apr 15th 2026"
@@ -151,6 +151,7 @@ export async function processBooking(
         reference,
         status: booking.status,
       });
+      await client.releaseBooking(bookingId);
       return { status: 'skipped', reason: `Booking status is '${booking.status}', not pending` };
     }
 
@@ -160,7 +161,8 @@ export async function processBooking(
         reference,
         departureDate: booking.misc.departureDate,
       });
-      return { status: 'skipped', reason: 'Departure date beyond 1-month window' };
+      await client.releaseBooking(bookingId);
+      return { status: 'skipped', reason: 'Departure date beyond 2-month window' };
     }
 
     // 4. Translate

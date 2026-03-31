@@ -77,6 +77,26 @@ export async function notifyPartialFailure(
   await sendSlackMessage(message);
 }
 
+export async function notifyPollCycleSummary(
+  approved: string[],
+  skipped: string[],
+  bookingErrors: string[],
+  systemErrors: string[]
+): Promise<void> {
+  const total = approved.length + skipped.length + bookingErrors.length + systemErrors.length;
+  const parts: string[] = [];
+  if (approved.length > 0)
+    parts.push(`:white_check_mark: *Approved (${approved.length}):* ${approved.join(', ')}`);
+  if (skipped.length > 0)
+    parts.push(`:fast_forward: *Skipped (${skipped.length}):* ${skipped.join(', ')}`);
+  if (bookingErrors.length > 0)
+    parts.push(`:warning: *Errors (${bookingErrors.length}):* ${bookingErrors.join(', ')}`);
+  if (systemErrors.length > 0)
+    parts.push(`:rotating_light: *System errors (${systemErrors.length}):* ${systemErrors.join(', ')}`);
+  const message = `:clipboard: *Poll Cycle Summary (${total} processed)*\n${parts.join('\n')}`;
+  await sendSlackMessage(message);
+}
+
 export async function notifySessionExpired(): Promise<void> {
   const message =
     `:rotating_light: *PRIME Session Expired*\n` +
