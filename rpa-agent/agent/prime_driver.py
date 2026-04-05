@@ -85,11 +85,12 @@ class PrimeDriver:
             key += (return_leg["date"], return_leg.get("time", ""))
         return key
 
-    def _dismiss_any_popup(self):
-        """Dismiss any PRIME popup dialog by finding its OK button.
+    def _dismiss_error_popup(self):
+        """Dismiss a PRIME error/validation popup by clicking its OK button.
 
-        PRIME popups are top-level windows (not children of the main window),
-        so we search the desktop for small windows with the PRIME title.
+        These popups (e.g. 'No Open Air Seats Available', 'Contact detail is
+        required') are top-level desktop windows, NOT children of the main
+        PRIME window — so we must search at the desktop level.
         """
         try:
             desktop = Desktop(backend="uia")
@@ -97,7 +98,7 @@ class PrimeDriver:
                 rect = w.rectangle()
                 if (rect.right - rect.left) < 700:
                     w.child_window(title="OK", control_type="Button").click_input()
-                    logger.info("Dismissed post-error popup")
+                    logger.info("Dismissed error popup")
                     time.sleep(0.3)
                     break
         except Exception:
@@ -1085,9 +1086,9 @@ class PrimeDriver:
                 # Booking-level errors: stop processing — if the data is wrong
                 # for one passenger, it'll be wrong for all of them
                 try:
-                    self._dismiss_any_popup()
+                    self._dismiss_error_popup()
                     self.click_refresh()
-                    self._dismiss_any_popup()
+                    self._dismiss_error_popup()
                 except Exception:
                     pass
                 break
