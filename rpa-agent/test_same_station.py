@@ -1,4 +1,4 @@
-"""Test that same-station dialog dismissal still works (CEB→TAG triggers it)."""
+"""Test that same-station dialog dismissal still works (CEB→CEB triggers it)."""
 
 import requests
 
@@ -16,7 +16,7 @@ payload = {
     ],
     "departureLeg": {
         "origin": "CEB",
-        "destination": "TAG",
+        "destination": "CEB",
         "date": "Wed, Apr 8th 2026",
         "time": "6:00 AM",
         "accommodation": "OA",
