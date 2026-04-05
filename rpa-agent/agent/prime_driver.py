@@ -88,25 +88,19 @@ class PrimeDriver:
     def _dismiss_any_popup(self):
         """Dismiss any PRIME popup dialog by clicking OK.
 
-        Uses desktop-level search since PRIME popups are top-level windows
-        (not children of the main window). Detected by matching the app
-        title with width < 700px (same heuristic as error dialog detection).
+        Used after error-path Refresh which can trigger validation popups
+        (e.g. 'Contact detail is required') from partially filled form state.
         """
         try:
-            desktop = Desktop(backend="uia")
-            windows = desktop.windows(title_re="OCEAN FAST FERRIES.*")
-            for w in windows:
-                rect = w.rectangle()
-                width = rect.right - rect.left
-                if width < 700:
-                    try:
-                        ok_btn = w.child_window(title="OK", control_type="Button")
-                        ok_btn.click_input()
-                    except Exception:
-                        send_keys("{ENTER}")
+            dlg = self.main_window.child_window(
+                title_re=".*OCEAN FAST FERRIES.*", control_type="Window"
+            )
+            if dlg.exists(timeout=0.5):
+                ok_btn = dlg.child_window(title="OK", control_type="Button")
+                if ok_btn.exists(timeout=0.5):
                     logger.info("Dismissed post-error popup")
+                    ok_btn.click_input()
                     time.sleep(0.3)
-                    break
         except Exception:
             pass
 
