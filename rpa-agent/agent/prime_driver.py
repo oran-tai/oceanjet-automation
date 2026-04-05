@@ -1086,6 +1086,7 @@ class PrimeDriver:
                 # Booking-level errors: stop processing — if the data is wrong
                 # for one passenger, it'll be wrong for all of them
                 try:
+                    self._dismiss_any_popup()
                     self.click_refresh()
                     self._dismiss_any_popup()
                 except Exception:
