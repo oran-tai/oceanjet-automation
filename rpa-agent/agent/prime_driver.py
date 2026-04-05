@@ -90,13 +90,16 @@ class PrimeDriver:
 
         These popups (e.g. 'No Open Air Seats Available', 'Contact detail is
         required') are top-level desktop windows, NOT children of the main
-        PRIME window — so we must search at the desktop level.
+        PRIME window. The popup may have lost focus (e.g. fill_personal_details
+        clicked form fields behind it), so we set_focus() first.
         """
         try:
             desktop = Desktop(backend="uia")
             for w in desktop.windows(title_re="OCEAN FAST FERRIES.*"):
                 rect = w.rectangle()
                 if (rect.right - rect.left) < 700:
+                    w.set_focus()
+                    time.sleep(0.2)
                     w.child_window(title="OK", control_type="Button").click_input()
                     logger.info("Dismissed error popup")
                     time.sleep(0.3)
@@ -554,14 +557,6 @@ class PrimeDriver:
                     availability_info = line[len("AVAILABLE:"):].strip()
         except Exception as e:
             logger.error(f"Gemini Vision failed for sold-out check: {e}")
-
-        # Dismiss the popup
-        try:
-            ok_btn = popup.child_window(title="OK", control_type="Button")
-            ok_btn.click_input()
-        except Exception:
-            send_keys("{ENTER}")
-        time.sleep(0.3)
 
         # Build error message with availability details
         parts = []
