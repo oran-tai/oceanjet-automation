@@ -27,6 +27,7 @@ orchestrator/           # TypeScript microservice
   src/bookaway/         — Bookaway API client and types
   src/operators/        — Operator modules (OceanJet mapper, RPA client, mock)
   src/orchestrator/     — Polling loop and booking processor
+  src/events/           — BigQuery event publisher (best-effort lifecycle tracking)
   src/notifications/    — Slack webhook alerts
   src/utils/            — Logger, time utilities
   tests/                — Unit tests (vitest)
@@ -73,3 +74,4 @@ type C:\oceanjet-automation\orchestrator\.env
 - Pacing: inter-booking delay (90–180s, orchestrator, only after approved bookings) + inter-passenger delay (5–15s, RPA agent)
 - PRIME error popups are top-level desktop windows (not children of main window) — `_dismiss_error_popup()` uses desktop-level search + `set_focus()` + Enter. `_dismiss_same_station_dialog()` uses child window search (different UIA approach, do not merge them)
 - TRIP_SOLD_OUT: detected when popup blocks form interaction (COMError on gender combo), Gemini Vision reads popup text + seat availability
+- BigQuery events: 5 types (`booking_claimed`, `booking_skipped`, `booking_failed`, `booking_approved`, `poll_cycle_completed`) to `travelier-ai:oceanjet.booking_events`. All failures use `booking_failed` with `error_code` to distinguish cause. Best-effort — never blocks main flow. Config: `BQ_PROJECT_ID`, `BQ_KEY_FILE`

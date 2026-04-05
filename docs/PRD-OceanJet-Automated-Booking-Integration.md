@@ -205,8 +205,8 @@ Reading remaining seat capacity from PRIME to update availability on Bookaway an
 #### 5.14 Multi-Operator Expansion
 Adding new operators by creating a new data mapping config and operator interaction module per operator. The orchestrator and Bookaway integration remain unchanged. Each operator's interaction module can use whichever method suits their system — RPA for desktop apps, browser automation for web portals, or direct API calls where available.
 
-#### 5.15 Events Table & Analytics Pipeline
-Publish structured events (booking received, ticket issued, error occurred, booking approved, etc.) to a BigQuery events table via Kafka or a similar streaming mechanism. This enables full observability — tracking processing times, error rates by type, volume trends, and per-route success rates. The events table would also serve as the source of truth for dashboards and operational reporting.
+#### 5.15 Events Table & Analytics Pipeline — Done (April 5, 2026)
+The orchestrator publishes structured events to a BigQuery events table (`travelier-ai:oceanjet.booking_events`) via the `@google-cloud/bigquery` client. Five event types track the full booking lifecycle: `booking_claimed`, `booking_skipped`, `booking_failed`, `booking_approved`, and `poll_cycle_completed`. Failure causes are differentiated by the `error_code` field (e.g., `TRIP_SOLD_OUT`, `PRIME_CRASH`, `APPROVAL_FAILED`). Events are best-effort — failures to publish never block the main processing flow. This enables full observability: processing times, error rates by type, volume trends, and per-route success rates. Auth via service account (`oceanjet-events@travelier-ai.iam.gserviceaccount.com`) with `bigquery.dataEditor` role.
 
 #### 5.16 AI Desktop Agent Upgrade Path
 If PRIME undergoes a significant UI redesign that breaks RPA selectors, the modular PRIME interaction layer can be swapped to an AI desktop agent (e.g., Claude Computer Use API, OpenClaw) that reads the screen semantically and adapts to UI changes without reprogramming. This could also handle unexpected error dialogs or novel screen states that selector-based RPA cannot anticipate.
@@ -413,7 +413,7 @@ No blocking questions remain.
   - **Phase 1 (Complete):** TypeScript orchestrator — Bookaway API client, data mapper (all 4 booking types), booking processor, polling loop, Slack alerts, mock operator. 47 unit tests passing.
   - **Phase 2 (Complete):** Python RPA agent — pywinauto + Gemini Vision driving PRIME desktop app. Form fill, voyage selection, ticket issuance, ticket number capture, print preview handling, error detection (11/12 error codes). First production E2E booking completed March 22, 2026.
   - **Phase 2.5 (Complete):** Multi-passenger RPA optimizations (March 31, 2026) — voyage-only mode skips redundant trip field filling for pax 2+ on same leg; Gemini Vision cache reuses parsed grid rows by route+date; print preview close only loops for expected count. Saves ~3-4s per skipped Gemini call and ~2s per skipped trip fill.
-  - **Phase 3 (In Progress):** Multi-booking continuous mode with human-like pacing (April 5, 2026) — inter-booking delays (90–180s after approved bookings), inter-passenger delays (5–15s), sold-out popup detection via Gemini Vision with seat availability reporting, first-cycle validation guard removed. SESSION_EXPIRED detection, events table → BigQuery still remaining.
+  - **Phase 3 (In Progress):** Multi-booking continuous mode with human-like pacing (April 5, 2026) — inter-booking delays (90–180s after approved bookings), inter-passenger delays (5–15s), sold-out popup detection via Gemini Vision with seat availability reporting, first-cycle validation guard removed, BigQuery events table for lifecycle tracking (5 event types). SESSION_EXPIRED detection still remaining.
 - All 4 booking types (one-way, round-trip, connecting-one-way, connecting-round-trip) are supported and validated in production.
 
 ---

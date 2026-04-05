@@ -54,6 +54,9 @@ oceanjet-automation/
 │   │   │   ├── mock/
 │   │   │   │   └── operator.ts  — Returns fake ticket numbers for testing
 │   │   │   └── types.ts         — TranslatedBooking, TicketResult, error codes
+│   │   ├── events/
+│   │   │   ├── bigquery.ts      — Best-effort event publisher to BigQuery
+│   │   │   └── types.ts         — EventType union and BookingEvent interface
 │   │   ├── orchestrator/
 │   │   │   ├── loop.ts          — Continuous polling, claim-before-process, graceful shutdown
 │   │   │   └── processor.ts     — Booking processing, error routing, approval with retry
@@ -62,7 +65,7 @@ oceanjet-automation/
 │   │   ├── utils/
 │   │   │   ├── logger.ts        — Structured JSON logging, Bearer token redaction
 │   │   │   └── time.ts          — 24h→12h time conversion
-│   │   ├── config.ts            — Env-based config, TARGET_BOOKING, Windows trim compat
+│   │   ├── config.ts            — Env-based config, TARGET_BOOKING, BigQuery, Windows trim compat
 │   │   └── index.ts             — Entry point
 │   └── tests/                   — 47 unit tests (vitest)
 │
@@ -288,6 +291,7 @@ Discovered via Accessibility Insights inspection on March 18-19, 2026. Full deta
 
 ```
 axios              # HTTP client for Bookaway API and RPA agent
+@google-cloud/bigquery  # BigQuery event publishing
 dotenv             # Environment variable loading
 winston            # Structured JSON logging
 ```
@@ -369,6 +373,36 @@ The mapper (`orchestrator/src/operators/oceanjet/mapper.ts`) handles:
 ```
 
 Note: `approvalInputs` must **not** include an `_id` field — including it causes a 500 "Cast to ObjectId" error.
+
+## BigQuery Events
+
+The orchestrator publishes lifecycle events to `travelier-ai:oceanjet.booking_events` for observability and analytics. Events are best-effort — publish failures are logged but never block the main flow.
+
+### Event Types
+
+| Event | When emitted | Key fields |
+|---|---|---|
+| `booking_claimed` | Booking claimed on Bookaway | `booking_id`, `reference` |
+| `booking_skipped` | Not pending or outside 2-month window | `skip_reason` |
+| `booking_failed` | Any failure (validation, RPA, approval) | `error_code`, `error_detail` |
+| `booking_approved` | Full success end-to-end | `tickets_issued_count`, `departure_tickets`, `return_tickets`, `duration_ms` |
+| `poll_cycle_completed` | Poll cycle finished | `approved_count`, `skipped_count`, `booking_errors_count`, `system_errors_count` |
+
+All events include `event_id` (UUID), `timestamp` (UTC), and `environment` (stage/prod).
+
+### Failure Differentiation
+
+All failures emit `booking_failed` — the `error_code` field distinguishes the cause:
+
+| Category | Error codes |
+|---|---|
+| Booking-level (release + continue) | `PASSENGER_VALIDATION_ERROR`, `STATION_NOT_FOUND`, `TRIP_NOT_FOUND`, `TRIP_SOLD_OUT`, `VOYAGE_TIME_MISMATCH`, `ACCOMMODATION_UNAVAILABLE`, `PRIME_VALIDATION_ERROR`, `UNKNOWN_ERROR` |
+| System-level (release + stop) | `PRIME_TIMEOUT`, `PRIME_CRASH`, `SESSION_EXPIRED`, `RPA_INTERNAL_ERROR` |
+| Approval (keep claimed) | `APPROVAL_FAILED` |
+
+### Auth
+
+Service account `oceanjet-events@travelier-ai.iam.gserviceaccount.com` with `bigquery.dataEditor` role. Config via `BQ_PROJECT_ID` and `BQ_KEY_FILE` env vars. If `BQ_PROJECT_ID` is empty, events are silently disabled.
 
 ## Resolved Questions
 
