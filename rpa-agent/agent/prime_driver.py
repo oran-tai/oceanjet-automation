@@ -85,6 +85,25 @@ class PrimeDriver:
             key += (return_leg["date"], return_leg.get("time", ""))
         return key
 
+    def _dismiss_any_popup(self):
+        """Dismiss any PRIME popup dialog by clicking OK.
+
+        Used after error-path Refresh which can trigger validation popups
+        (e.g. 'Contact detail is required') from partially filled form state.
+        """
+        try:
+            dlg = self.main_window.child_window(
+                title_re=".*OCEAN FAST FERRIES.*", control_type="Window"
+            )
+            if dlg.exists(timeout=0.5):
+                ok_btn = dlg.child_window(title="OK", control_type="Button")
+                if ok_btn.exists(timeout=0.5):
+                    logger.info("Dismissed post-error popup")
+                    ok_btn.click_input()
+                    time.sleep(0.3)
+        except Exception:
+            pass
+
     def _dismiss_same_station_dialog(self):
         """Dismiss the 'Origin and Destination must not be the same' error dialog.
 
@@ -1068,6 +1087,7 @@ class PrimeDriver:
                 # for one passenger, it'll be wrong for all of them
                 try:
                     self.click_refresh()
+                    self._dismiss_any_popup()
                 except Exception:
                     pass
                 break
