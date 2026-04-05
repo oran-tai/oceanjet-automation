@@ -12,7 +12,9 @@ from google.genai import types
 from pywinauto import Desktop, Application, timings
 from pywinauto.keyboard import send_keys
 
-from agent.config import PRIME_WINDOW_TITLE, PRIME_TIMEOUT_SEC, GEMINI_API_KEY
+import random
+
+from agent.config import PRIME_WINDOW_TITLE, PRIME_TIMEOUT_SEC, GEMINI_API_KEY, PASSENGER_DELAY_MIN_S, PASSENGER_DELAY_MAX_S
 from agent.date_utils import bookaway_date_to_prime, match_departure_time
 from agent.error_codes import TicketErrorCode, PrimeError, SYSTEM_ERROR_CODES
 
@@ -1057,6 +1059,13 @@ class PrimeDriver:
 
                 # Update prev_leg_key after successful issuance
                 prev_leg_key = current_leg_key
+
+                # Pacing delay between passengers
+                task_index = tasks.index((pax_idx, pax, leg, trip_type, return_leg, label, leg_type))
+                if task_index < len(tasks) - 1:
+                    delay = random.randint(PASSENGER_DELAY_MIN_S, PASSENGER_DELAY_MAX_S)
+                    logger.info(f"Pacing delay: {delay}s before next passenger")
+                    time.sleep(delay)
 
             except PrimeError as e:
                 has_failure = True
