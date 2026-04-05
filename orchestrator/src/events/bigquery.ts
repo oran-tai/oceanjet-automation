@@ -26,6 +26,15 @@ function isEnabled(): boolean {
   return !!config.bigquery.projectId;
 }
 
+/** Convert Bookaway date format ("Wed, Apr 8th 2026") to ISO date ("2026-04-08"). */
+function normalizeDate(raw: string | null): string | null {
+  if (!raw) return null;
+  const cleaned = raw.replace(/(\d+)(st|nd|rd|th)/g, '$1');
+  const parsed = new Date(cleaned);
+  if (isNaN(parsed.getTime())) return raw;
+  return parsed.toISOString().slice(0, 10);
+}
+
 export async function trackEvent(
   eventType: EventType,
   fields: Partial<Omit<BookingEvent, 'event_id' | 'event_type' | 'timestamp' | 'environment'>> = {}
@@ -42,7 +51,7 @@ export async function trackEvent(
     booking_type: fields.booking_type ?? null,
     origin: fields.origin ?? null,
     destination: fields.destination ?? null,
-    departure_date: fields.departure_date ?? null,
+    departure_date: normalizeDate(fields.departure_date ?? null),
     passenger_count: fields.passenger_count ?? null,
     status: fields.status ?? null,
     error_code: fields.error_code ?? null,
