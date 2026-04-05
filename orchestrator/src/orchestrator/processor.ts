@@ -9,6 +9,7 @@ import {
   notifySystemFailure,
   notifyPartialFailure,
 } from '../notifications/slack.js';
+import { trackEvent } from '../events/bigquery.js';
 
 export type ProcessResult =
   | { status: 'approved' }
@@ -152,6 +153,11 @@ export async function processBooking(
         status: booking.status,
       });
       await client.releaseBooking(bookingId);
+      await trackEvent('booking_skipped', {
+        booking_id: bookingId, reference,
+        skip_reason: `Status is '${booking.status}'`,
+        duration_ms: Date.now() - startTime,
+      });
       return { status: 'skipped', reason: `Booking status is '${booking.status}', not pending` };
     }
 
@@ -162,6 +168,12 @@ export async function processBooking(
         departureDate: booking.misc.departureDate,
       });
       await client.releaseBooking(bookingId);
+      await trackEvent('booking_skipped', {
+        booking_id: bookingId, reference,
+        departure_date: booking.misc.departureDate,
+        skip_reason: 'Departure date beyond 2-month window',
+        duration_ms: Date.now() - startTime,
+      });
       return { status: 'skipped', reason: 'Departure date beyond 2-month window' };
     }
 
@@ -186,6 +198,16 @@ export async function processBooking(
         reference,
         errors: passengerErrors,
         durationMs: Date.now() - startTime,
+      });
+      await trackEvent('booking_failed', {
+        booking_id: bookingId, reference,
+        booking_type: translated.bookingType,
+        origin: translated.departureLeg.origin,
+        destination: translated.departureLeg.destination,
+        passenger_count: translated.passengers.length,
+        error_code: errorCode,
+        error_detail: errorDetail,
+        duration_ms: Date.now() - startTime,
       });
       return {
         status: 'booking-error',
@@ -218,6 +240,16 @@ export async function processBooking(
           errorCode,
           durationMs: Date.now() - startTime,
         });
+        await trackEvent('booking_failed', {
+          booking_id: bookingId, reference,
+          booking_type: translated.bookingType,
+          origin: translated.departureLeg.origin,
+          destination: translated.departureLeg.destination,
+          passenger_count: translated.passengers.length,
+          error_code: errorCode,
+          error_detail: errorDetail,
+          duration_ms: Date.now() - startTime,
+        });
         return {
           status: 'booking-error',
           reason: `Partial failure: ${errorDetail}`,
@@ -233,6 +265,16 @@ export async function processBooking(
           reference,
           errorCode,
           durationMs: Date.now() - startTime,
+        });
+        await trackEvent('booking_failed', {
+          booking_id: bookingId, reference,
+          booking_type: translated.bookingType,
+          origin: translated.departureLeg.origin,
+          destination: translated.departureLeg.destination,
+          passenger_count: translated.passengers.length,
+          error_code: errorCode,
+          error_detail: errorDetail,
+          duration_ms: Date.now() - startTime,
         });
         return {
           status: 'system-error',
@@ -268,6 +310,16 @@ export async function processBooking(
         errorCode,
         error: ticketResult.error,
         durationMs: Date.now() - startTime,
+      });
+      await trackEvent('booking_failed', {
+        booking_id: bookingId, reference,
+        booking_type: translated.bookingType,
+        origin: translated.departureLeg.origin,
+        destination: translated.departureLeg.destination,
+        passenger_count: translated.passengers.length,
+        error_code: errorCode,
+        error_detail: errorDetail,
+        duration_ms: Date.now() - startTime,
       });
       return {
         status: 'booking-error',
@@ -315,6 +367,19 @@ export async function processBooking(
             error: error.message,
             durationMs: Date.now() - startTime,
           });
+          await trackEvent('booking_failed', {
+            booking_id: bookingId, reference,
+            booking_type: translated.bookingType,
+            origin: translated.departureLeg.origin,
+            destination: translated.departureLeg.destination,
+            passenger_count: translated.passengers.length,
+            tickets_issued_count: ticketResult.departureTickets.length + ticketResult.returnTickets.length,
+            departure_tickets: ticketResult.departureTickets.join(','),
+            return_tickets: ticketResult.returnTickets.join(','),
+            error_code: 'APPROVAL_FAILED',
+            error_detail: `Approval failed after ${maxRetries} retries: ${error.message}`,
+            duration_ms: Date.now() - startTime,
+          });
           return {
             status: 'booking-error',
             reason: `Approval failed: ${error.message}`,
@@ -329,6 +394,20 @@ export async function processBooking(
       departureTickets: ticketResult.departureTickets,
       returnTickets: ticketResult.returnTickets,
       durationMs: Date.now() - startTime,
+    });
+
+    await trackEvent('booking_approved', {
+      booking_id: bookingId, reference,
+      booking_type: translated.bookingType,
+      origin: translated.departureLeg.origin,
+      destination: translated.departureLeg.destination,
+      departure_date: translated.departureLeg.date,
+      passenger_count: translated.passengers.length,
+      tickets_issued_count: ticketResult.departureTickets.length + ticketResult.returnTickets.length,
+      departure_tickets: ticketResult.departureTickets.join(','),
+      return_tickets: ticketResult.returnTickets.join(','),
+      status: 'approved',
+      duration_ms: Date.now() - startTime,
     });
 
     return { status: 'approved' };
@@ -347,6 +426,11 @@ export async function processBooking(
       reference,
       error: error.message,
       durationMs: Date.now() - startTime,
+    });
+    await trackEvent('booking_failed', {
+      booking_id: bookingId, reference,
+      error_detail: error.message,
+      duration_ms: Date.now() - startTime,
     });
     return { status: 'system-error', reason: error.message };
   }

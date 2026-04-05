@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { processBooking } from './processor.js';
 import { notifyPollCycleSummary } from '../notifications/slack.js';
+import { trackEvent } from '../events/bigquery.js';
 
 export async function startOrchestrator(
   client: BookawayClient,
@@ -74,6 +75,10 @@ export async function startOrchestrator(
         try {
           // Claim the booking
           await client.claimBooking(booking._id);
+          await trackEvent('booking_claimed', {
+            booking_id: booking._id,
+            reference: booking.reference,
+          });
 
           // Process it
           const result = await processBooking(booking, operator, client);
@@ -141,6 +146,12 @@ export async function startOrchestrator(
         if (systemErrors.length > 0) parts.push(`System errors (${systemErrors.length}): ${systemErrors.join(', ')}`);
         logger.info(`Poll cycle summary (${totalProcessed} processed):\n  ${parts.join('\n  ')}`);
         await notifyPollCycleSummary(approved, skipped, bookingErrors, systemErrors);
+        await trackEvent('poll_cycle_completed', {
+          approved_count: approved.length,
+          skipped_count: skipped.length,
+          booking_errors_count: bookingErrors.length,
+          system_errors_count: systemErrors.length,
+        });
       }
 
       // Wait before next poll

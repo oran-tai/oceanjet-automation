@@ -50,6 +50,10 @@ export const config = {
     bookingDelayMinMs: parseInt(process.env.BOOKING_DELAY_MIN_MS || '90000', 10),  // 1.5 min
     bookingDelayMaxMs: parseInt(process.env.BOOKING_DELAY_MAX_MS || '180000', 10), // 3 min
   },
+  bigquery: {
+    projectId: (process.env.BQ_PROJECT_ID || '').trim(),
+    keyFilename: (process.env.BQ_KEY_FILE || '').trim(),
+  },
   operatorMode: (process.env.OPERATOR_MODE || 'mock') as 'mock' | 'rpa',
   targetBooking: (process.env.TARGET_BOOKING || '').trim(),
 } as const;
