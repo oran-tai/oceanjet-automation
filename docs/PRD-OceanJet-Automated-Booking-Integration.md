@@ -180,8 +180,12 @@ These significantly improve the experience but the core automation works without
 #### 5.9 Processing Dashboard & Logs
 A simple dashboard or log interface where the operations team can see automation status: bookings processed, bookings failed, bookings queued, and processing time per booking.
 
-#### 5.10 Configurable Throttling
-The ability to configure the speed at which the bot processes bookings (e.g., delay between PRIME actions) to avoid overloading OceanJet's system or appearing suspicious. This includes the ability to run multiple bot instances in parallel, each with its own PRIME license.
+#### 5.10 Configurable Throttling — Implemented (April 5, 2026)
+The ability to configure the speed at which the bot processes bookings to avoid appearing suspicious. Implemented with two layers of pacing:
+- **Inter-booking delay** (orchestrator): Random 90–180s delay after each successfully approved booking. Skipped/errored bookings proceed immediately. Configurable via `BOOKING_DELAY_MIN_MS` / `BOOKING_DELAY_MAX_MS` env vars.
+- **Inter-passenger delay** (RPA agent): Random 5–15s delay between ticket issuances within the same booking. Configurable via `PASSENGER_DELAY_MIN_S` / `PASSENGER_DELAY_MAX_S` env vars.
+
+Combined with ~1.5 min average processing time, this yields ~15 bookings/hour. This also includes the ability to run multiple bot instances in parallel, each with its own PRIME license.
 
 #### 5.11 Notification System
 Slack/email notifications for operations teams when bookings fail automation and require manual intervention, with context about the failure reason.
@@ -384,7 +388,7 @@ The "last mile" that actually issues tickets on the operator's system. For Ocean
 | 2 | How does PRIME handle connecting routes? | **Two separate one-way tickets.** There is no connecting route mode in PRIME. Each leg is booked independently. Updated in section 5.6. |
 | 3 | What is the maximum safe throughput for PRIME? | **Target: ~60 tickets/hour (1 per minute).** No known system-imposed limits, but starting conservative. A single bot can handle ~480 tickets in an 8-hour window. |
 | 4 | How many PRIME licenses are available? | **Easy to get more.** Additional licenses can be requested from OceanJet at low/no cost. Scaling with parallel bots is not constrained by licensing. |
-| 5 | What is OceanJet's policy on bot access to PRIME? | **Operating quietly.** No discussion with OceanJet planned. The bot should behave at human-like speed and pacing. |
+| 5 | What is OceanJet's policy on bot access to PRIME? | **Operating quietly.** No discussion with OceanJet planned. The bot should behave at human-like speed and pacing. Implemented via configurable inter-booking delays (90–180s after approved bookings) and inter-passenger delays (5–15s between tickets). Target throughput: ~15 bookings/hour. |
 | 6 | Are connecting route schedules fixed or changing? | **Fixed / rarely change.** A hardcoded lookup table is sufficient. |
 | 7 | Are there booking types beyond one-way, round-trip, and connecting routes? | **No.** These three cover all bookings in the OceanJet queue. |
 | 8 | What happens on partial failure (some passengers succeed, one fails)? | **Hold and alert.** The booking stays claimed on Bookaway (not released, not approved). An alert is sent to Slack with details on which passengers succeeded and which failed. Agent resolves manually. Updated in section 5.8. |
@@ -409,7 +413,7 @@ No blocking questions remain.
   - **Phase 1 (Complete):** TypeScript orchestrator — Bookaway API client, data mapper (all 4 booking types), booking processor, polling loop, Slack alerts, mock operator. 47 unit tests passing.
   - **Phase 2 (Complete):** Python RPA agent — pywinauto + Gemini Vision driving PRIME desktop app. Form fill, voyage selection, ticket issuance, ticket number capture, print preview handling, error detection (11/12 error codes). First production E2E booking completed March 22, 2026.
   - **Phase 2.5 (Complete):** Multi-passenger RPA optimizations (March 31, 2026) — voyage-only mode skips redundant trip field filling for pax 2+ on same leg; Gemini Vision cache reuses parsed grid rows by route+date; print preview close only loops for expected count. Saves ~3-4s per skipped Gemini call and ~2s per skipped trip fill.
-  - **Phase 3 (Next):** Multi-booking continuous mode, SESSION_EXPIRED detection, events table → BigQuery.
+  - **Phase 3 (In Progress):** Multi-booking continuous mode with human-like pacing (April 5, 2026) — inter-booking delays (90–180s after approved bookings), inter-passenger delays (5–15s), sold-out popup detection via Gemini Vision with seat availability reporting, first-cycle validation guard removed. SESSION_EXPIRED detection, events table → BigQuery still remaining.
 - All 4 booking types (one-way, round-trip, connecting-one-way, connecting-round-trip) are supported and validated in production.
 
 ---

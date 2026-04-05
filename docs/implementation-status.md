@@ -1,6 +1,6 @@
 # OceanJet Automation — Implementation Status
 
-**Last updated:** March 31, 2026
+**Last updated:** April 5, 2026
 
 ---
 
@@ -116,6 +116,9 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
   - Voyage-only mode: pax 2+ on same leg skip redundant trip field filling (trip type, dates, stations, accommodation already retained after Refresh)
   - Gemini Vision cache: parsed grid rows cached by `origin|destination|date` — pax 2+ reuse cached rows, skipping screenshot + API call
   - Both scoped per `fill_booking()` call — each booking starts fresh, no cross-booking leakage
+  - **Inter-passenger pacing** (April 5, 2026): Random 5–15s delay between ticket issuances within the same booking (`PASSENGER_DELAY_MIN_S` / `PASSENGER_DELAY_MAX_S`)
+  - **Sold-out popup detection** (April 5, 2026): When PRIME shows a "No seats available" popup after voyage selection, it blocks form interaction (COMError). RPA catches this, screenshots the main window, uses Gemini Vision to read both popup text and Trip Availability seat counts (TC/OA/BC), dismisses the popup, and raises `TRIP_SOLD_OUT` with availability details for Slack alerts
+  - **Error popup dismissal**: Separate `_dismiss_error_popup()` (desktop-level search + `set_focus()` + Enter key) from `_dismiss_same_station_dialog()` (child window search) — different popup types require different UIA approaches
 
 **Error Code Status (12 total):**
 
@@ -126,7 +129,7 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
 | `VOYAGE_TIME_MISMATCH` | Booking | Yes | **VM passed** | Always | No voyage matches departure time | Release booking, stop loop |
 | `ACCOMMODATION_UNAVAILABLE` | Booking | Yes | **VM passed** | Always | Accommodation code not in dropdown | Release booking, stop loop |
 | `PASSENGER_VALIDATION_ERROR` | Booking | Yes | **Unit test** | Always | Missing/invalid name, age, or gender | Release booking, continue loop (pre-PRIME) |
-| `TRIP_SOLD_OUT` | Booking | Yes | — | Always | Voyage exists but no seats available | Release booking, continue loop |
+| `TRIP_SOLD_OUT` | Booking | Yes | **VM passed** | Always | Voyage exists but no seats available — detected via COMError when popup blocks form, Gemini Vision reads popup text + Trip Availability seat counts (TC/OA/BC) | Release booking, continue loop |
 | `PRIME_VALIDATION_ERROR` | Booking | Yes | — | Always | PRIME rejects form on Issue click | Release booking, stop loop |
 | `PRIME_TIMEOUT` | System | Yes | — | Always | Dialog doesn't appear in time | **Stop loop**, alert operator |
 | `PRIME_CRASH` | System | Yes | — | Always | Can't connect to PRIME process | **Stop loop**, alert operator |
@@ -134,7 +137,7 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
 | `RPA_INTERNAL_ERROR` | System | Yes | — | Always | Screenshot/API/internal failure, failed ticket capture | **Stop loop**, alert operator |
 | `UNKNOWN_ERROR` | Catch-all | Yes | — | Always | Unexpected unhandled exception | **Stop loop**, alert operator |
 
-**Score:** 11/12 implemented, 5/12 tested (4 VM + 1 unit test).
+**Score:** 11/12 implemented, 6/12 tested (5 VM + 1 unit test).
 
 **Not yet implemented:** `SESSION_EXPIRED` (requires PRIME session timeout detection).
 
@@ -166,7 +169,7 @@ Communication: orchestrator → HTTP POST localhost:8080/issue-tickets → RPA a
 - **`SESSION_EXPIRED`** — detect PRIME login session timeout
 - **~~Round-trip ticket count~~** — resolved: PRIME returns 2 tickets per passenger (departure + return), comma-separated in one dialog. Code updated to split them correctly.
 - **Events table → BigQuery** — structured event publishing for dashboards
-- **Multi-booking continuous mode** — remove TARGET_BOOKING, process all pending bookings
+- **~~Multi-booking continuous mode~~** — Done (April 5, 2026). First-cycle validation guard removed, inter-booking pacing delays added (90–180s after approved bookings, no delay on skipped/errored), inter-passenger delays (5–15s). Target throughput: ~15 bookings/hour.
 - **Automated cancellations** — P2
 - **Real-time inventory syncing** — P2
 - **Multi-operator expansion** — P2

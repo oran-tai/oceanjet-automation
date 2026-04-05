@@ -1,6 +1,6 @@
 # OceanJet Automation — System Design
 
-**Last updated:** March 31, 2026
+**Last updated:** April 5, 2026
 
 ---
 
@@ -187,7 +187,7 @@ The agent must map what it observes in PRIME's UI to one of these error codes:
 |---|---|
 | Station code not in origin/destination dropdown | `STATION_NOT_FOUND` |
 | No voyages listed after selecting stations + date | `TRIP_NOT_FOUND` |
-| Voyage exists but "Sold Out" or no seats | `TRIP_SOLD_OUT` |
+| Voyage exists but "Sold Out" or no seats (detected via popup after voyage selection, with seat availability from Trip Availability section via Gemini Vision) | `TRIP_SOLD_OUT` |
 | No voyage matches the expected departure time | `VOYAGE_TIME_MISMATCH` |
 | Class exists but no seats in that class | `ACCOMMODATION_UNAVAILABLE` |
 | PRIME rejects passenger details (name/age/gender) | `PASSENGER_VALIDATION_ERROR` |
@@ -216,6 +216,7 @@ The agent must map what it observes in PRIME's UI to one of these error codes:
 12. Wait 3s for result dialog → screenshot → **Gemini Flash Vision** → extract ticket number from "Process Complete. Ticket number(s): [XXXXXXXX]."
 13. Click **OK** to dismiss success dialog
 14. Wait 3s → close **Print Preview** window(s) — only loops for expected count (1 for one-way, 2 for round-trip)
+15. If more passengers remain: **random 5–15s pacing delay** before next passenger
 
 Repeat for each passenger. For connecting routes, repeat for each leg. For round-trip connecting, repeat for all 4 legs.
 
@@ -316,11 +317,22 @@ For each poll cycle, the orchestrator:
    e. Validates departure is within PRIME's 2-month booking window
    f. Translates to OceanJet PRIME format (mapper resolves station codes, accommodation, connecting routes, 24h→12h time)
    g. Sends to RPA agent via POST `localhost:8080/issue-tickets`
-   h. On success: approves on Bookaway (with 3x retry)
-   i. On booking-level error: releases booking, sends Slack alert, continues to next
+   h. On success: approves on Bookaway (with 3x retry), then **random 90–180s pacing delay**
+   i. On booking-level error: releases booking, sends Slack alert, continues to next **immediately** (no delay)
    j. On system-level error: releases booking, sends Slack alert, **stops the loop**
 4. If `TARGET_BOOKING` is set, stops after processing that booking
 5. Otherwise waits `pollingIntervalMs`, then repeats
+
+### Pacing Configuration
+
+Human-like throughput pacing to avoid detection:
+
+| Layer | Config | Default | When applied |
+|---|---|---|---|
+| Inter-booking (orchestrator) | `BOOKING_DELAY_MIN_MS` / `BOOKING_DELAY_MAX_MS` | 90000 / 180000 (1.5–3 min) | After each **approved** booking only |
+| Inter-passenger (RPA agent) | `PASSENGER_DELAY_MIN_S` / `PASSENGER_DELAY_MAX_S` | 5 / 15 (5–15s) | Between ticket issuances within same booking |
+
+Combined with ~1.5 min average processing time, this yields ~15 bookings/hour (~4 min per booking).
 
 ### Orchestrator Data Translation
 
