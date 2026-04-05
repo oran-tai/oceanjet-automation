@@ -1,5 +1,6 @@
 """pywinauto driver for OceanJet PRIME desktop application."""
 
+import _ctypes
 import logging
 import re
 import time
@@ -442,6 +443,119 @@ class PrimeDriver:
         voyage_number = grid_rows[target_row].get("voyage_number", "unknown")
         arrival_time = grid_rows[target_row].get("arrival_time", "")
         return {"voyage_number": voyage_number, "arrival_time": arrival_time}
+
+    def _check_sold_out_after_voyage(self):
+        """Handle a COMError during personal details by checking for a sold-out popup.
+
+        Called when fill_personal_details raises a COMError, which typically means
+        a modal popup (e.g. 'No Open Air Seats Available.') is blocking the form.
+        Screenshots the main window (captures popup + Trip Availability section)
+        and uses Gemini Vision to read both.
+
+        Raises:
+            PrimeError: TRIP_SOLD_OUT if a sold-out popup is found.
+            PrimeError: RPA_INTERNAL_ERROR if no popup is found (unknown COMError cause).
+        """
+        from PIL import ImageGrab
+
+        desktop = Desktop(backend="uia")
+
+        # Check for error popup (small window with PRIME title)
+        popup = None
+        try:
+            windows = desktop.windows(title_re="OCEAN FAST FERRIES.*")
+            for w in windows:
+                rect = w.rectangle()
+                width = rect.right - rect.left
+                if width < 700:
+                    popup = w
+                    break
+        except Exception:
+            pass
+
+        if popup is None:
+            # No popup found — COMError was caused by something else
+            raise PrimeError(
+                TicketErrorCode.RPA_INTERNAL_ERROR,
+                "COMError during personal details fill — no popup detected",
+            )
+
+        # Screenshot the main window area (captures popup + Trip Availability)
+        try:
+            main_rect = self.main_window.rectangle()
+            screenshot = ImageGrab.grab(bbox=(
+                main_rect.left, main_rect.top, main_rect.right, main_rect.bottom
+            ))
+        except Exception as e:
+            logger.error(f"Failed to capture screenshot for sold-out check: {e}")
+            # Still dismiss popup and raise
+            try:
+                popup.child_window(title="OK", control_type="Button").click_input()
+            except Exception:
+                send_keys("{ENTER}")
+            time.sleep(0.3)
+            raise PrimeError(
+                TicketErrorCode.TRIP_SOLD_OUT,
+                "Seats unavailable (screenshot capture failed)",
+            )
+
+        prompt = (
+            "This is a screenshot of a ferry ticketing system. There is a popup dialog visible.\n"
+            "1. Read the popup dialog message text exactly as written.\n"
+            "2. Read the 'Trip Availability' section — find the 'Available' row and list the "
+            "seat counts for each class (TC, OA, BC).\n\n"
+            "Return in this exact format:\n"
+            "POPUP: <popup message text>\n"
+            "AVAILABLE: TC=<number>, OA=<number>, BC=<number>"
+        )
+
+        img_buffer = io.BytesIO()
+        screenshot.save(img_buffer, format="PNG")
+        image_bytes = img_buffer.getvalue()
+
+        availability_info = ""
+        popup_text = ""
+        try:
+            response = self.gemini_client.models.generate_content(
+                model="gemini-flash-latest",
+                contents=[
+                    prompt,
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+                ],
+            )
+            raw = response.text.strip()
+            logger.info(f"Sold-out check OCR result: {raw}")
+
+            # Parse response
+            for line in raw.split("\n"):
+                line = line.strip()
+                if line.upper().startswith("POPUP:"):
+                    popup_text = line[len("POPUP:"):].strip()
+                elif line.upper().startswith("AVAILABLE:"):
+                    availability_info = line[len("AVAILABLE:"):].strip()
+        except Exception as e:
+            logger.error(f"Gemini Vision failed for sold-out check: {e}")
+
+        # Dismiss the popup
+        try:
+            ok_btn = popup.child_window(title="OK", control_type="Button")
+            ok_btn.click_input()
+        except Exception:
+            send_keys("{ENTER}")
+        time.sleep(0.3)
+
+        # Build error message with availability details
+        parts = []
+        if popup_text:
+            parts.append(popup_text)
+        else:
+            parts.append("No seats available")
+        if availability_info:
+            parts.append(f"Availability: {availability_info}")
+
+        error_msg = " — ".join(parts)
+        logger.warning(f"Trip sold out: {error_msg}")
+        raise PrimeError(TicketErrorCode.TRIP_SOLD_OUT, error_msg)
 
     def fill_personal_details(self, passenger, contact_info: str = ""):
         """Fill the Personal Details pane for one passenger.
@@ -901,7 +1015,11 @@ class PrimeDriver:
                 if voyage_result and voyage_result.get("arrival_time"):
                     last_arrival_time = voyage_result["arrival_time"]
 
-                self.fill_personal_details(pax, contact_info)
+                try:
+                    self.fill_personal_details(pax, contact_info)
+                except _ctypes.COMError:
+                    # COMError means a popup is blocking the form (e.g. sold out)
+                    self._check_sold_out_after_voyage()
 
                 # Click Issue, handle confirmation, capture ticket number(s)
                 self.click_issue()
