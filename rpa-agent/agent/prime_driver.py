@@ -90,20 +90,32 @@ class PrimeDriver:
 
         These popups (e.g. 'No Open Air Seats Available', 'Contact detail is
         required') are top-level desktop windows, NOT children of the main
-        PRIME window. The popup may have lost focus (e.g. fill_personal_details
-        clicked form fields behind it), so we set_focus() first.
+        PRIME window. We first bring the popup to focus via desktop-level
+        search, then use the same main_window.child_window approach that
+        works for _dismiss_same_station_dialog.
         """
         try:
+            # Bring popup to focus via desktop-level search
             desktop = Desktop(backend="uia")
             for w in desktop.windows(title_re="OCEAN FAST FERRIES.*"):
                 rect = w.rectangle()
                 if (rect.right - rect.left) < 700:
                     w.set_focus()
-                    time.sleep(0.2)
-                    w.child_window(title="OK", control_type="Button").click_input()
-                    logger.info("Dismissed error popup")
                     time.sleep(0.3)
                     break
+            else:
+                return  # No popup found
+
+            # Click OK using the same pattern as _dismiss_same_station_dialog
+            dlg = self.main_window.child_window(
+                title_re=".*OCEAN FAST FERRIES.*", control_type="Window"
+            )
+            if dlg.exists(timeout=0.5):
+                ok_btn = dlg.child_window(title="OK", control_type="Button")
+                if ok_btn.exists(timeout=0.5):
+                    ok_btn.click_input()
+                    logger.info("Dismissed error popup")
+                    time.sleep(0.3)
         except Exception:
             pass
 
