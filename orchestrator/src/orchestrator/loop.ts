@@ -113,8 +113,8 @@ export async function startOrchestrator(
             break;
           }
 
-          // Pace bookings — random delay between each
-          if (running) {
+          // Pace bookings — delay only after successful end-to-end booking
+          if (running && result.status === 'approved') {
             const { bookingDelayMinMs, bookingDelayMaxMs } = config.pacing;
             const delay = bookingDelayMinMs + Math.random() * (bookingDelayMaxMs - bookingDelayMinMs);
             logger.info(`Pacing delay: ${Math.round(delay / 1000)}s before next booking`);
