@@ -46,6 +46,10 @@ export const config = {
     agentUrl: process.env.RPA_AGENT_URL || 'http://localhost:8080',
     authToken: process.env.RPA_AUTH_TOKEN || '',
   },
+  pacing: {
+    bookingDelayMinMs: parseInt(process.env.BOOKING_DELAY_MIN_MS || '90000', 10),  // 1.5 min
+    bookingDelayMaxMs: parseInt(process.env.BOOKING_DELAY_MAX_MS || '180000', 10), // 3 min
+  },
   operatorMode: (process.env.OPERATOR_MODE || 'mock') as 'mock' | 'rpa',
   targetBooking: (process.env.TARGET_BOOKING || '').trim(),
 } as const;

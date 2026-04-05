@@ -112,6 +112,14 @@ export async function startOrchestrator(
             running = false;
             break;
           }
+
+          // Pace bookings — random delay between each
+          if (running) {
+            const { bookingDelayMinMs, bookingDelayMaxMs } = config.pacing;
+            const delay = bookingDelayMinMs + Math.random() * (bookingDelayMaxMs - bookingDelayMinMs);
+            logger.info(`Pacing delay: ${Math.round(delay / 1000)}s before next booking`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
         } catch (error: any) {
           // Unexpected error in claim or process — log and skip to next booking
           logger.error('Unexpected error processing booking, skipping', {
@@ -133,13 +141,6 @@ export async function startOrchestrator(
         if (systemErrors.length > 0) parts.push(`System errors (${systemErrors.length}): ${systemErrors.join(', ')}`);
         logger.info(`Poll cycle summary (${totalProcessed} processed):\n  ${parts.join('\n  ')}`);
         await notifyPollCycleSummary(approved, skipped, bookingErrors, systemErrors);
-      }
-
-      // TODO: Remove after first production validation — stop after first poll cycle
-      if (!config.targetBooking) {
-        logger.info('First poll cycle complete, stopping for validation');
-        running = false;
-        break;
       }
 
       // Wait before next poll
