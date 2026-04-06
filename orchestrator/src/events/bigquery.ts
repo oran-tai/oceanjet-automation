@@ -60,6 +60,8 @@ export async function trackEvent(
     tickets_issued_count: fields.tickets_issued_count ?? null,
     departure_tickets: fields.departure_tickets ?? null,
     return_tickets: fields.return_tickets ?? null,
+    route: fields.route ?? null,
+    booking_date: fields.booking_date ?? null,
     duration_ms: fields.duration_ms ?? null,
     approved_count: fields.approved_count ?? null,
     skipped_count: fields.skipped_count ?? null,

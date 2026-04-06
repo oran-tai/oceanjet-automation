@@ -24,6 +24,8 @@ export interface BookingEvent {
   tickets_issued_count: number | null;
   departure_tickets: string | null;
   return_tickets: string | null;
+  route: string | null;
+  booking_date: string | null;
   duration_ms: number | null;
   approved_count: number | null;
   skipped_count: number | null;

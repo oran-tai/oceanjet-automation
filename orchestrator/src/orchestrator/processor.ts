@@ -146,6 +146,15 @@ export async function processBooking(
     // 1. Fetch full details
     const booking = await client.fetchBookingDetails(bookingId);
 
+    // Common booking context for all events after this point
+    const bookingCtx = {
+      booking_id: bookingId,
+      reference,
+      route: booking.misc.route,
+      departure_date: booking.misc.departureDate,
+      booking_date: booking.createdAt || null,
+    };
+
     // 2. Verify booking is still pending
     if (booking.status !== 'pending') {
       logger.info('Booking no longer pending, skipping', {
@@ -154,7 +163,7 @@ export async function processBooking(
       });
       await client.releaseBooking(bookingId);
       await trackEvent('booking_skipped', {
-        booking_id: bookingId, reference,
+        ...bookingCtx,
         skip_reason: `Status is '${booking.status}'`,
         duration_ms: Date.now() - startTime,
       });
@@ -169,8 +178,7 @@ export async function processBooking(
       });
       await client.releaseBooking(bookingId);
       await trackEvent('booking_skipped', {
-        booking_id: bookingId, reference,
-        departure_date: booking.misc.departureDate,
+        ...bookingCtx,
         skip_reason: 'Departure date beyond 2-month window',
         duration_ms: Date.now() - startTime,
       });
@@ -200,7 +208,7 @@ export async function processBooking(
         durationMs: Date.now() - startTime,
       });
       await trackEvent('booking_failed', {
-        booking_id: bookingId, reference,
+        ...bookingCtx,
         booking_type: translated.bookingType,
         origin: translated.departureLeg.origin,
         destination: translated.departureLeg.destination,
@@ -241,7 +249,7 @@ export async function processBooking(
           durationMs: Date.now() - startTime,
         });
         await trackEvent('booking_failed', {
-          booking_id: bookingId, reference,
+          ...bookingCtx,
           booking_type: translated.bookingType,
           origin: translated.departureLeg.origin,
           destination: translated.departureLeg.destination,
@@ -267,7 +275,7 @@ export async function processBooking(
           durationMs: Date.now() - startTime,
         });
         await trackEvent('booking_failed', {
-          booking_id: bookingId, reference,
+          ...bookingCtx,
           booking_type: translated.bookingType,
           origin: translated.departureLeg.origin,
           destination: translated.departureLeg.destination,
@@ -312,7 +320,7 @@ export async function processBooking(
         durationMs: Date.now() - startTime,
       });
       await trackEvent('booking_failed', {
-        booking_id: bookingId, reference,
+        ...bookingCtx,
         booking_type: translated.bookingType,
         origin: translated.departureLeg.origin,
         destination: translated.departureLeg.destination,
@@ -368,7 +376,7 @@ export async function processBooking(
             durationMs: Date.now() - startTime,
           });
           await trackEvent('booking_failed', {
-            booking_id: bookingId, reference,
+            ...bookingCtx,
             booking_type: translated.bookingType,
             origin: translated.departureLeg.origin,
             destination: translated.departureLeg.destination,
@@ -397,11 +405,10 @@ export async function processBooking(
     });
 
     await trackEvent('booking_approved', {
-      booking_id: bookingId, reference,
+      ...bookingCtx,
       booking_type: translated.bookingType,
       origin: translated.departureLeg.origin,
       destination: translated.departureLeg.destination,
-      departure_date: translated.departureLeg.date,
       passenger_count: translated.passengers.length,
       tickets_issued_count: ticketResult.departureTickets.length + ticketResult.returnTickets.length,
       departure_tickets: ticketResult.departureTickets.join(','),

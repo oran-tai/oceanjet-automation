@@ -48,6 +48,7 @@ export interface BookingDetail {
   reference: string;
   status: string;
   inProgressBy: string | null;
+  createdAt?: string;
   contact: {
     email: string;
     phone: string;
