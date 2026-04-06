@@ -41,6 +41,7 @@ export const config = {
   },
   slack: {
     webhookUrl: process.env.SLACK_WEBHOOK_URL || '',
+    webhookUrl2: process.env.SLACK_WEBHOOK_URL_2 || '',
   },
   rpa: {
     agentUrl: process.env.RPA_AGENT_URL || 'http://localhost:8080',

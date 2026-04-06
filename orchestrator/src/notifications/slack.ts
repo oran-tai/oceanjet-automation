@@ -4,17 +4,20 @@ import { logger } from '../utils/logger.js';
 import type { TicketErrorCode } from '../operators/types.js';
 
 async function sendSlackMessage(text: string): Promise<void> {
-  if (!config.slack.webhookUrl) {
+  const urls = [config.slack.webhookUrl, config.slack.webhookUrl2].filter(Boolean);
+  if (urls.length === 0) {
     logger.warn('Slack webhook URL not configured, skipping notification');
     return;
   }
-  try {
-    await axios.post(config.slack.webhookUrl, { text });
-  } catch (error: any) {
-    logger.error('Failed to send Slack notification', {
-      error: error.message,
-    });
-  }
+  await Promise.all(
+    urls.map((url) =>
+      axios.post(url, { text }).catch((error: any) => {
+        logger.error('Failed to send Slack notification', {
+          error: error.message,
+        });
+      })
+    )
+  );
 }
 
 export async function notifyBookingFailure(
