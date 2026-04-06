@@ -42,6 +42,25 @@ class PrimeDriver:
 
         self.gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
+    def _call_gemini(self, prompt: str, image_bytes: bytes, max_retries: int = 3) -> str:
+        """Call Gemini Vision with retry on transient errors (503, timeout, etc.)."""
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = self.gemini_client.models.generate_content(
+                    model="gemini-flash-latest",
+                    contents=[
+                        prompt,
+                        types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+                    ],
+                )
+                return response.text.strip()
+            except Exception as e:
+                logger.warning(f"Gemini API call failed (attempt {attempt}/{max_retries}): {e}")
+                if attempt < max_retries:
+                    time.sleep(2 * attempt)
+                else:
+                    raise
+
     def verify_issue_new_ticket_screen(self):
         """Verify that PRIME is on the Issue New Ticket screen.
 
@@ -334,13 +353,7 @@ class PrimeDriver:
         image_bytes = img_buffer.getvalue()
 
         try:
-            response = self.gemini_client.models.generate_content(
-                model="gemini-flash-latest",
-                contents=[
-                    prompt,
-                    types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-                ],
-            )
+            response_text = self._call_gemini(prompt, image_bytes)
         except Exception as e:
             raise PrimeError(
                 TicketErrorCode.RPA_INTERNAL_ERROR,
@@ -348,8 +361,6 @@ class PrimeDriver:
             )
 
         import json
-
-        response_text = response.text.strip()
         if response_text.startswith("```"):
             lines = response_text.split("\n")
             response_text = "\n".join(lines[1:-1])
@@ -539,14 +550,7 @@ class PrimeDriver:
         availability_info = ""
         popup_text = ""
         try:
-            response = self.gemini_client.models.generate_content(
-                model="gemini-flash-latest",
-                contents=[
-                    prompt,
-                    types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-                ],
-            )
-            raw = response.text.strip()
+            raw = self._call_gemini(prompt, image_bytes)
             logger.info(f"Sold-out check OCR result: {raw}")
 
             # Parse response
@@ -819,14 +823,7 @@ class PrimeDriver:
         image_bytes = img_buffer.getvalue()
 
         try:
-            response = self.gemini_client.models.generate_content(
-                model="gemini-flash-latest",
-                contents=[
-                    prompt,
-                    types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-                ],
-            )
-            text = response.text.strip()
+            text = self._call_gemini(prompt, image_bytes)
             if text:
                 return text
         except Exception as e:
