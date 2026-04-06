@@ -261,6 +261,22 @@ update-oceanjet
 
 This alias (created by `setup.ps1`) does `git pull` and `npm install`.
 
+### Stopping
+
+```batch
+stop
+```
+
+Creates a `.stop` file that the orchestrator detects between bookings. Finishes the current booking, exits cleanly with no error notifications. The RPA agent stays idle — close its window manually.
+
+### Disconnecting AnyDesk
+
+```batch
+disconnect
+```
+
+Run before closing AnyDesk. Transfers the session to the local console so Windows keeps rendering the desktop. Without this, PIL ImageGrab returns black screenshots and Gemini Vision calls fail. Also requires a one-time registry change to disable lock screen: `reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Personalization" /v NoLockScreen /t REG_DWORD /d 1 /f`
+
 ### Multi-VM scaling
 
 Each VM runs its own PRIME instance + both services. Each bot uses its own PRIME license.

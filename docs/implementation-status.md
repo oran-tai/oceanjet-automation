@@ -112,6 +112,8 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
 - Slack notifications for all failure types
 - Both services run on same VM (localhost:8080)
 - One-click VM deployment via `setup.ps1` + `update-oceanjet` command
+- Graceful stop via `stop` command (`.stop` file signal, no error notifications)
+- AnyDesk disconnect safety via `disconnect` command (keeps desktop rendered for screenshots)
 - FastAPI HTTP server with bearer token auth
 - **Multi-passenger optimizations** (March 31, 2026):
   - Voyage-only mode: pax 2+ on same leg skip redundant trip field filling (trip type, dates, stations, accommodation already retained after Refresh)
