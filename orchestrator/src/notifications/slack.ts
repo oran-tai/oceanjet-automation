@@ -3,8 +3,10 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { TicketErrorCode } from '../operators/types.js';
 
-async function sendSlackMessage(text: string): Promise<void> {
-  const urls = [config.slack.webhookUrl, config.slack.webhookUrl2].filter(Boolean);
+async function sendSlackMessage(text: string, primaryOnly = false): Promise<void> {
+  const urls = primaryOnly
+    ? [config.slack.webhookUrl].filter(Boolean)
+    : [config.slack.webhookUrl, config.slack.webhookUrl2].filter(Boolean);
   if (urls.length === 0) {
     logger.warn('Slack webhook URL not configured, skipping notification');
     return;
@@ -97,7 +99,7 @@ export async function notifyPollCycleSummary(
   if (systemErrors.length > 0)
     parts.push(`:rotating_light: *System errors (${systemErrors.length}):* ${systemErrors.join(', ')}`);
   const message = `:clipboard: *Poll Cycle Summary (${total} processed)*\n${parts.join('\n')}`;
-  await sendSlackMessage(message);
+  await sendSlackMessage(message, true);
 }
 
 export async function notifySessionExpired(): Promise<void> {
