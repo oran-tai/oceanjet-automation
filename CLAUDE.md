@@ -64,12 +64,6 @@ stop
 ```
 Creates a `.stop` file that the orchestrator picks up between bookings — finishes the current booking, then exits cleanly with no error notifications. The RPA agent stays idle until you close its window manually.
 
-### Disconnecting AnyDesk safely (keeps RPA screenshots working)
-```batch
-disconnect
-```
-Run this BEFORE closing AnyDesk. Transfers the session to the local console so Windows keeps rendering the desktop. Without this, PIL ImageGrab returns black screenshots and Gemini Vision calls fail.
-
 ### Checking env file
 ```batch
 type C:\oceanjet-automation\orchestrator\.env
