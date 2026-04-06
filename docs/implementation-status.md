@@ -100,7 +100,7 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
 - Connects to PRIME via pywinauto UIA backend
 - Fills Trip Details: trip type, date, origin, destination, voyage selection, accommodation
 - Fills Personal Details: first name, last name, age, gender, contact info (email from first passenger)
-- Voyage selection via PIL ImageGrab screenshot → Gemini Flash vision API
+- Voyage selection via PIL ImageGrab screenshot → Gemini Flash vision API (3 retries with exponential backoff on transient errors)
 - Issue button click → Confirm dialog (Yes) → success dialog capture → ticket number extraction
 - Dialog text reading via Gemini Vision screenshot (Delphi paints text directly, not accessible via UIA)
 - Print preview auto-close after each ticket issuance (loops only for expected count: 1 for one-way, 2 for round-trip)
