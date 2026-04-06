@@ -27,13 +27,14 @@ export async function startOrchestrator(
   // Login
   await client.login();
 
-  // TRIP_NOT_FOUND cooldown — persists across cycles, resets on restart
-  const tripNotFoundCache = new Map<string, number>();
+  // Booking error cooldown — persists across cycles, resets on restart.
+  // Prevents retrying the same booking-level errors (TRIP_NOT_FOUND, TRIP_SOLD_OUT, etc.) every cycle.
+  const bookingErrorCache = new Map<string, number>();
 
   logger.info('Orchestrator started', {
     pollingIntervalMs: config.polling.intervalMs,
     operatorMode: config.operatorMode,
-    tripNotFoundCooldownMs: config.pacing.tripNotFoundCooldownMs,
+    bookingErrorCooldownMs: config.pacing.bookingErrorCooldownMs,
   });
 
   while (running) {
@@ -44,10 +45,10 @@ export async function startOrchestrator(
       break;
     }
 
-    // Purge expired TRIP_NOT_FOUND cooldowns
+    // Purge expired booking error cooldowns
     const now = Date.now();
-    for (const [id, until] of tripNotFoundCache) {
-      if (now >= until) tripNotFoundCache.delete(id);
+    for (const [id, until] of bookingErrorCache) {
+      if (now >= until) bookingErrorCache.delete(id);
     }
 
     // Reset per-cycle state
@@ -80,9 +81,9 @@ export async function startOrchestrator(
           });
           return false;
         }
-        const cooldownUntil = tripNotFoundCache.get(b._id);
+        const cooldownUntil = bookingErrorCache.get(b._id);
         if (cooldownUntil && Date.now() < cooldownUntil) {
-          logger.debug('Skipping TRIP_NOT_FOUND cooldown booking', {
+          logger.debug('Skipping booking error cooldown', {
             reference: b.reference,
             cooldownRemainingMin: Math.round((cooldownUntil - Date.now()) / 60000),
           });
@@ -139,9 +140,9 @@ export async function startOrchestrator(
               break;
           }
 
-          // Add to TRIP_NOT_FOUND cooldown cache
-          if (result.status === 'booking-error' && result.errorCode === 'TRIP_NOT_FOUND') {
-            tripNotFoundCache.set(booking._id, Date.now() + config.pacing.tripNotFoundCooldownMs);
+          // Add booking-level errors to cooldown cache
+          if (result.status === 'booking-error') {
+            bookingErrorCache.set(booking._id, Date.now() + config.pacing.bookingErrorCooldownMs);
           }
 
           // If targeting a specific booking, stop after processing it

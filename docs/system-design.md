@@ -320,7 +320,7 @@ python-dotenv      # Environment variable loading
 For each poll cycle, the orchestrator:
 
 1. Fetches up to 500 pending bookings from Bookaway (sorted by departure date)
-2. Filters out already-claimed bookings, in-memory duplicates, TRIP_NOT_FOUND cooldown bookings, and TARGET_BOOKING mismatches
+2. Filters out already-claimed bookings, in-memory duplicates, booking error cooldown bookings, and TARGET_BOOKING mismatches
 3. For each unclaimed booking:
    a. Claims it on Bookaway (`inProgressBy` = bot identifier)
    b. Fetches full booking details
@@ -330,9 +330,8 @@ For each poll cycle, the orchestrator:
    f. Translates to OceanJet PRIME format (mapper resolves station codes, accommodation, connecting routes, 24h→12h time)
    g. Sends to RPA agent via POST `localhost:8080/issue-tickets`
    h. On success: approves on Bookaway (with 3x retry), then **random 90–180s pacing delay**
-   i. On TRIP_NOT_FOUND: releases booking, adds to 24h cooldown cache, continues immediately
-   j. On other booking-level error: releases booking, sends Slack alert, continues to next **immediately** (no delay)
-   k. On system-level error: releases booking, sends Slack alert, **stops the loop**
+   i. On booking-level error: releases booking, sends Slack alert, adds to 24h cooldown cache, continues immediately (no delay)
+   j. On system-level error: releases booking, sends Slack alert, **stops the loop**
 4. If `TARGET_BOOKING` is set, stops after processing that booking
 5. Otherwise waits `pollingIntervalMs`, then repeats
 
@@ -344,7 +343,7 @@ Human-like throughput pacing to avoid detection:
 |---|---|---|---|
 | Inter-booking (orchestrator) | `BOOKING_DELAY_MIN_MS` / `BOOKING_DELAY_MAX_MS` | 90000 / 180000 (1.5–3 min) | After each **approved** booking only |
 | Inter-passenger (RPA agent) | `PASSENGER_DELAY_MIN_S` / `PASSENGER_DELAY_MAX_S` | 5 / 15 (5–15s) | Between ticket issuances within same booking |
-| TRIP_NOT_FOUND cooldown (orchestrator) | `TRIP_NOT_FOUND_COOLDOWN_MS` | 86400000 (24h) | After a booking fails with TRIP_NOT_FOUND — silently skipped until cooldown expires. In-memory, resets on restart. |
+| Booking error cooldown (orchestrator) | `BOOKING_ERROR_COOLDOWN_MS` | 86400000 (24h) | After any booking-level error — silently skipped until cooldown expires. First occurrence sends alert + BQ event normally. In-memory, resets on restart. |
 
 Combined with ~1.5 min average processing time, this yields ~15 bookings/hour (~4 min per booking).
 

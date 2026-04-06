@@ -77,7 +77,7 @@ type C:\oceanjet-automation\orchestrator\.env
 - Station codes, accommodation codes, connecting routes are in `orchestrator/src/operators/oceanjet/config.ts`
 - Booking types: one-way, round-trip, connecting route (detected automatically by mapper)
 - RPA integration tests must be standalone scripts (not pytest) due to COM threading conflicts
-- Pacing: inter-booking delay (90–180s, orchestrator, only after approved bookings) + inter-passenger delay (5–15s, RPA agent) + TRIP_NOT_FOUND cooldown (24h default, `TRIP_NOT_FOUND_COOLDOWN_MS`)
+- Pacing: inter-booking delay (90–180s, orchestrator, only after approved bookings) + inter-passenger delay (5–15s, RPA agent) + booking error cooldown (24h default, `BOOKING_ERROR_COOLDOWN_MS`) for all booking-level errors
 - PRIME error popups are top-level desktop windows (not children of main window) — `_dismiss_error_popup()` uses desktop-level search + `set_focus()` + Enter. `_dismiss_same_station_dialog()` uses child window search (different UIA approach, do not merge them)
 - TRIP_SOLD_OUT: detected when popup blocks form interaction (COMError on gender combo), Gemini Vision reads popup text + seat availability
 - Gemini Vision calls: centralized in `_call_gemini()` with 3 retries and exponential backoff (2s, 4s) for transient 503/timeout errors
