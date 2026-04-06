@@ -23,12 +23,22 @@ export async function startOrchestrator(
   // Login
   await client.login();
 
+  // TRIP_NOT_FOUND cooldown — persists across cycles, resets on restart
+  const tripNotFoundCache = new Map<string, number>();
+
   logger.info('Orchestrator started', {
     pollingIntervalMs: config.polling.intervalMs,
     operatorMode: config.operatorMode,
+    tripNotFoundCooldownMs: config.pacing.tripNotFoundCooldownMs,
   });
 
   while (running) {
+    // Purge expired TRIP_NOT_FOUND cooldowns
+    const now = Date.now();
+    for (const [id, until] of tripNotFoundCache) {
+      if (now >= until) tripNotFoundCache.delete(id);
+    }
+
     // Reset per-cycle state
     const processedBookingIds = new Set<string>();
     const approved: string[] = [];
@@ -56,6 +66,14 @@ export async function startOrchestrator(
         if (processedBookingIds.has(b._id)) {
           logger.debug('Skipping already-processed booking', {
             reference: b.reference,
+          });
+          return false;
+        }
+        const cooldownUntil = tripNotFoundCache.get(b._id);
+        if (cooldownUntil && Date.now() < cooldownUntil) {
+          logger.debug('Skipping TRIP_NOT_FOUND cooldown booking', {
+            reference: b.reference,
+            cooldownRemainingMin: Math.round((cooldownUntil - Date.now()) / 60000),
           });
           return false;
         }
@@ -100,6 +118,11 @@ export async function startOrchestrator(
             case 'system-error':
               systemErrors.push(booking.reference);
               break;
+          }
+
+          // Add to TRIP_NOT_FOUND cooldown cache
+          if (result.status === 'booking-error' && result.errorCode === 'TRIP_NOT_FOUND') {
+            tripNotFoundCache.set(booking._id, Date.now() + config.pacing.tripNotFoundCooldownMs);
           }
 
           // If targeting a specific booking, stop after processing it

@@ -50,6 +50,7 @@ export const config = {
   pacing: {
     bookingDelayMinMs: parseInt(process.env.BOOKING_DELAY_MIN_MS || '90000', 10),  // 1.5 min
     bookingDelayMaxMs: parseInt(process.env.BOOKING_DELAY_MAX_MS || '180000', 10), // 3 min
+    tripNotFoundCooldownMs: parseInt(process.env.TRIP_NOT_FOUND_COOLDOWN_MS || '86400000', 10), // 24h
   },
   bigquery: {
     projectId: (process.env.BQ_PROJECT_ID || '').trim(),
