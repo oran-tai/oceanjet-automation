@@ -1,3 +1,5 @@
+import { existsSync, unlinkSync } from 'fs';
+import { resolve } from 'path';
 import type { BookawayClient } from '../bookaway/client.js';
 import type { OperatorModule } from '../operators/types.js';
 import { config } from '../config.js';
@@ -5,6 +7,8 @@ import { logger } from '../utils/logger.js';
 import { processBooking } from './processor.js';
 import { notifyPollCycleSummary } from '../notifications/slack.js';
 import { trackEvent } from '../events/bigquery.js';
+
+const STOP_FILE = resolve(process.cwd(), '.stop');
 
 export async function startOrchestrator(
   client: BookawayClient,
@@ -33,6 +37,13 @@ export async function startOrchestrator(
   });
 
   while (running) {
+    // Check for manual stop signal
+    if (existsSync(STOP_FILE)) {
+      try { unlinkSync(STOP_FILE); } catch { /* ignore */ }
+      logger.info('Manual stop requested via .stop file');
+      break;
+    }
+
     // Purge expired TRIP_NOT_FOUND cooldowns
     const now = Date.now();
     for (const [id, until] of tripNotFoundCache) {
@@ -89,6 +100,14 @@ export async function startOrchestrator(
       // Process each unclaimed booking
       for (const booking of unclaimed) {
         if (!running) break;
+
+        // Check for manual stop signal between bookings
+        if (existsSync(STOP_FILE)) {
+          try { unlinkSync(STOP_FILE); } catch { /* ignore */ }
+          logger.info('Manual stop requested via .stop file');
+          running = false;
+          break;
+        }
 
         try {
           // Claim the booking

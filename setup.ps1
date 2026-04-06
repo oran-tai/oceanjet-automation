@@ -198,8 +198,10 @@ Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalizatio
 
 # Install disconnect command — run before closing AnyDesk
 Copy-Item "$PROJECT_DIR\disconnect.bat" "C:\Windows\disconnect.bat" -Force
+Copy-Item "$PROJECT_DIR\stop.bat" "C:\Windows\stop.bat" -Force
 Write-Host "  Lock screen disabled on disconnect" -ForegroundColor Green
 Write-Host "  Command installed: type 'disconnect' before closing AnyDesk" -ForegroundColor Green
+Write-Host "  Command installed: type 'stop' to gracefully stop the automation" -ForegroundColor Green
 
 # --- Create update command ---
 @"

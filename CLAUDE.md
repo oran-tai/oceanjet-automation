@@ -58,6 +58,12 @@ cd C:\oceanjet-automation\orchestrator && powershell -Command "(Get-Content .env
 2. Start RPA Agent: `run-rpa` (runs `cd C:\oceanjet-automation\rpa-agent && start.bat`)
 3. Start Orchestrator: `run-orch` (runs `cd C:\oceanjet-automation\orchestrator && start.bat`)
 
+### Stopping the automation gracefully
+```batch
+stop
+```
+Creates a `.stop` file that the orchestrator picks up between bookings — finishes the current booking, then exits cleanly with no error notifications. Also kills the RPA agent process.
+
 ### Disconnecting AnyDesk safely (keeps RPA screenshots working)
 ```batch
 disconnect
