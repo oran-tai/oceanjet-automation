@@ -410,6 +410,16 @@ All failures emit `booking_failed` — the `error_code` field distinguishes the 
 | System-level (release + stop) | `PRIME_TIMEOUT`, `PRIME_CRASH`, `SESSION_EXPIRED`, `RPA_INTERNAL_ERROR` |
 | Approval (keep claimed) | `APPROVAL_FAILED` |
 
+### Dashboard Metrics
+
+Key metrics derived from the events table:
+
+| Metric | Formula | Notes |
+|---|---|---|
+| **Bookings per hour** | Approved count ÷ (total processing time + pacing delays) in hours | Processing time from `duration_ms` on approved events. Pacing = (N-1) × 135s average delay between approved bookings. |
+| **Hours saved** | (processing time for all outcomes + pacing delays) in hours | Sums `duration_ms` from approved + failed + skipped events, plus pacing delays between approved bookings. Counts only active work time — gaps between sessions are excluded. |
+| **Automation success rate** | Approved ÷ (Approved + Failed excluding inventory errors) | Excludes TRIP_NOT_FOUND, TRIP_SOLD_OUT, VOYAGE_TIME_MISMATCH, ACCOMMODATION_UNAVAILABLE — these are not automation failures. |
+
 ### Auth
 
 Service account `oceanjet-events@travelier-ai.iam.gserviceaccount.com` with `bigquery.dataEditor` role. Config via `BQ_PROJECT_ID` and `BQ_KEY_FILE` env vars. If `BQ_PROJECT_ID` is empty, events are silently disabled.

@@ -219,8 +219,8 @@ If PRIME undergoes a significant UI redesign that breaks RPA selectors, the modu
 
 | Metric | Baseline | Target | Stretch | Measurement Method |
 |---|---|---|---|---|
-| Automation success rate | 0% (fully manual) | 90% of bookings processed without manual intervention | 95% | Count of auto-approved bookings / total OceanJet bookings per week |
-| Processing time per booking | ~10 minutes | ~2 minutes | <1 minute | Average time from booking claim to Bookaway approval |
+| Automation success rate | 0% (fully manual) | 90% of bookings processed without manual intervention | 95% | Approved ÷ (Approved + Failed), excluding inventory errors (TRIP_NOT_FOUND, TRIP_SOLD_OUT, etc.) — from BigQuery events table |
+| Processing time per booking | ~10 minutes | ~2 minutes | <1 minute | Average `duration_ms` on `booking_approved` events |
 | Fulfillment error rate | ~5% | 0% | 0% | Count of bookings with wrong passenger details, times, or routes / total processed |
 | Manual intervention rate | 100% | <10% | <5% | Bookings requiring agent action / total OceanJet bookings |
 
@@ -228,7 +228,7 @@ If PRIME undergoes a significant UI redesign that breaks RPA selectors, the modu
 
 | Metric | Target | Measurement Method |
 |---|---|---|
-| Agent hours freed per month | ~611 hours/month (~7,333/year) | Pre vs. post automation agent time tracking |
+| Agent hours freed per month | ~611 hours/month (~7,333/year) | Sum of `duration_ms` across all booking outcomes + pacing delays, from BigQuery events table |
 | OceanJet booking cancellation rate (Bookaway-caused) | Decrease by >80% | Cancellations due to processing delays / total bookings |
 | Customer support inquiries about pending OceanJet bookings | Decrease by >50% | Support ticket count filtered by OceanJet + pending/status |
 | OceanJet partner satisfaction / rating | Improvement (qualitative) | Partner feedback |
