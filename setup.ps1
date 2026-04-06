@@ -187,6 +187,20 @@ $shortcut.Save()
 Write-Host ""
 Write-Host "  Desktop shortcuts created" -ForegroundColor Green
 
+# --- Configure session to stay active on disconnect (for RPA screenshots) ---
+Write-Host ""
+Write-Host "Step 8: Configuring session keep-alive for RPA..." -ForegroundColor Cyan
+
+# Disable lock screen on disconnect — keeps desktop rendered for PIL ImageGrab
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Force -ErrorAction SilentlyContinue | Out-Null
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -Value 1 -Type DWord -Force
+
+# Install disconnect command — run before closing AnyDesk
+Copy-Item "$PROJECT_DIR\disconnect.bat" "C:\Windows\disconnect.bat" -Force
+Write-Host "  Lock screen disabled on disconnect" -ForegroundColor Green
+Write-Host "  Command installed: type 'disconnect' before closing AnyDesk" -ForegroundColor Green
+
 # --- Create update command ---
 @"
 @echo off

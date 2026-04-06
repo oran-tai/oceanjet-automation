@@ -58,6 +58,12 @@ cd C:\oceanjet-automation\orchestrator && powershell -Command "(Get-Content .env
 2. Start RPA Agent: `run-rpa` (runs `cd C:\oceanjet-automation\rpa-agent && start.bat`)
 3. Start Orchestrator: `run-orch` (runs `cd C:\oceanjet-automation\orchestrator && start.bat`)
 
+### Disconnecting AnyDesk safely (keeps RPA screenshots working)
+```batch
+disconnect
+```
+Run this BEFORE closing AnyDesk. Transfers the session to the local console so Windows keeps rendering the desktop. Without this, PIL ImageGrab returns black screenshots and Gemini Vision calls fail.
+
 ### Checking env file
 ```batch
 type C:\oceanjet-automation\orchestrator\.env
