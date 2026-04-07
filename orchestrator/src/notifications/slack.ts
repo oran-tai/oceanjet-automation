@@ -12,13 +12,27 @@ async function sendSlackMessage(text: string, primaryOnly = false): Promise<void
     return;
   }
   await Promise.all(
-    urls.map((url) =>
-      axios.post(url, { text }).catch((error: any) => {
-        logger.error('Failed to send Slack notification', {
-          error: error.message,
-        });
-      })
-    )
+    urls.map(async (url, i) => {
+      const label = `webhook ${i + 1}/${urls.length}`;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await axios.post(url, { text });
+          logger.info(`Slack ${label} sent`);
+          return;
+        } catch (error: any) {
+          if (attempt < 3) {
+            logger.warn(`Slack ${label} attempt ${attempt} failed, retrying`, {
+              error: error.message,
+            });
+            await new Promise((r) => setTimeout(r, attempt * 1000));
+          } else {
+            logger.error(`Slack ${label} failed after 3 attempts`, {
+              error: error.message,
+            });
+          }
+        }
+      }
+    })
   );
 }
 

@@ -1080,13 +1080,10 @@ class PrimeDriver:
                 # Reset prev_leg_key on error to force full fill on next task
                 prev_leg_key = None
 
-                # System-level errors: stop processing entirely
                 if e.error_code in SYSTEM_ERROR_CODES:
                     logger.error("System-level error, stopping booking")
-                    break
 
-                # Booking-level errors: stop processing — if the data is wrong
-                # for one passenger, it'll be wrong for all of them
+                # Clean up any leftover popups so the next booking starts clean
                 try:
                     self._dismiss_error_popup()
                     self.click_refresh()
