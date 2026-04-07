@@ -229,10 +229,16 @@ class PrimeDriver:
             try:
                 origin_combo.select(leg["origin"])
             except Exception:
-                raise PrimeError(
-                    TicketErrorCode.STATION_NOT_FOUND,
-                    f"Origin station '{leg['origin']}' not found in PRIME dropdown",
-                )
+                # A leftover popup may be blocking the dropdown — dismiss and retry
+                self._dismiss_error_popup()
+                time.sleep(0.3)
+                try:
+                    origin_combo.select(leg["origin"])
+                except Exception:
+                    raise PrimeError(
+                        TicketErrorCode.STATION_NOT_FOUND,
+                        f"Origin station '{leg['origin']}' not found in PRIME dropdown",
+                    )
             time.sleep(0.3)
             self._dismiss_same_station_dialog()
 
@@ -241,10 +247,15 @@ class PrimeDriver:
             try:
                 dest_combo.select(leg["destination"])
             except Exception:
-                raise PrimeError(
-                    TicketErrorCode.STATION_NOT_FOUND,
-                    f"Destination station '{leg['destination']}' not found in PRIME dropdown",
-                )
+                self._dismiss_error_popup()
+                time.sleep(0.3)
+                try:
+                    dest_combo.select(leg["destination"])
+                except Exception:
+                    raise PrimeError(
+                        TicketErrorCode.STATION_NOT_FOUND,
+                        f"Destination station '{leg['destination']}' not found in PRIME dropdown",
+                    )
             time.sleep(0.3)
             self._dismiss_same_station_dialog()
 
