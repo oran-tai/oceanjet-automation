@@ -804,6 +804,8 @@ class PrimeDriver:
         from PIL import ImageGrab
 
         try:
+            dialog.set_focus()
+            time.sleep(0.3)
             rect = dialog.rectangle()
             screenshot = ImageGrab.grab(bbox=(
                 rect.left, rect.top, rect.right, rect.bottom
