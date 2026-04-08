@@ -1,6 +1,6 @@
 # OceanJet Automation — Implementation Status
 
-**Last updated:** April 5, 2026
+**Last updated:** April 8, 2026
 
 ---
 
@@ -19,7 +19,7 @@ The full orchestrator is implemented, compiles cleanly, and has been verified ag
 | **OceanJet Data Mapper** | `orchestrator/src/operators/oceanjet/mapper.ts`, `config.ts` | Done — station codes (8 confirmed from live API + 12 from reference sheet), accommodation codes, connecting route detection (6 routes), passenger extraction from extraInfos, contactInfo from first passenger. |
 | **Booking Processor** | `orchestrator/src/orchestrator/processor.ts` | Done — handles all 4 booking types, status re-check after fetch (skips non-pending), passenger validation (pre-PRIME), departure window validation, conditional TRIP_NOT_FOUND alerting (≤7 days only), approval with 3x retry, structured error code routing (12 error codes: 8 booking-level → release + continue, 4 system-level → release + stop). |
 | **Orchestrator Loop** | `orchestrator/src/orchestrator/loop.ts`, `src/index.ts` | Done — continuous polling, claim-before-process, TARGET_BOOKING filter, in-memory duplicate detection, 24h booking error cooldown (all booking-level errors), graceful stop via `.stop` file, graceful shutdown on SIGINT/SIGTERM. |
-| **Slack Notifications** | `orchestrator/src/notifications/slack.ts` | Done — booking failure, system failure, partial failure, session expired alerts. |
+| **Slack Notifications** | `orchestrator/src/notifications/slack.ts` | Done — booking failure, system failure, partial failure, session expired alerts. Dual webhook (booking alerts → both, system alerts → primary only). Each webhook retries 3x with backoff. |
 | **Mock Operator** | `orchestrator/src/operators/mock/operator.ts` | Done — returns sequential fake ticket numbers for end-to-end testing without PRIME. |
 | **RPA Client** | `orchestrator/src/operators/oceanjet/rpa-client.ts` | Done — HTTP client for the Python RPA agent. |
 | **BigQuery Events** | `orchestrator/src/events/bigquery.ts`, `types.ts` | Done — 5 event types (`booking_claimed`, `booking_skipped`, `booking_failed`, `booking_approved`, `poll_cycle_completed`) to `travelier-ai:oceanjet.booking_events`. Best-effort, never blocks main flow. Service account auth. |
@@ -107,9 +107,12 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
 - Handles all 4 booking types (one-way, round-trip, connecting-one-way, connecting-round-trip)
 - Error detection: all 12 error codes implemented
 - Critical safety: failed ticket capture after Confirm → RPA_INTERNAL_ERROR (system-level stop)
-- All errors (booking + system) stop processing remaining passengers
+- All errors (booking + system) stop processing remaining passengers, with popup cleanup before breaking to prevent cascading failures
 - TARGET_BOOKING mode: process a single booking by reference, then stop
-- Slack notifications for all failure types
+- Slack notifications for all failure types (dual webhook with 3x retry per webhook)
+- PRIME window loss recovery: `ElementNotFoundError` → reconnect to PRIME → retry current passenger once → `PRIME_CRASH` if retry fails, with partial results preserved
+- Dialog screenshot safety: `set_focus()` before `ImageGrab.grab()` to prevent capturing wrong window
+- Station dropdown resilience: dismiss blocking popups and retry before raising `STATION_NOT_FOUND`
 - Both services run on same VM (localhost:8080)
 - One-click VM deployment via `setup.ps1` + `update-oceanjet` command
 - Graceful stop via `stop` command (`.stop` file signal, no error notifications)
@@ -134,7 +137,7 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
 | `TRIP_SOLD_OUT` | Booking | Yes | **VM passed** | Always | Voyage exists but no seats available — detected via COMError when popup blocks form, Gemini Vision reads popup text + Trip Availability seat counts (TC/OA/BC) | Release booking, continue loop |
 | `PRIME_VALIDATION_ERROR` | Booking | Yes | — | Always | PRIME rejects form on Issue click | Release booking, stop loop |
 | `PRIME_TIMEOUT` | System | Yes | — | Always | Dialog doesn't appear in time | **Stop loop**, alert operator |
-| `PRIME_CRASH` | System | Yes | — | Always | Can't connect to PRIME process | **Stop loop**, alert operator |
+| `PRIME_CRASH` | System | Yes | — | Always | Can't connect to PRIME process, or window lost mid-booking (after reconnect retry fails) | **Stop loop**, alert operator |
 | `SESSION_EXPIRED` | System | No | — | Always | PRIME login session timed out | **Stop loop**, alert operator |
 | `RPA_INTERNAL_ERROR` | System | Yes | — | Always | Screenshot/API/internal failure, failed ticket capture | **Stop loop**, alert operator |
 | `UNKNOWN_ERROR` | Catch-all | Yes | — | Always | Unexpected unhandled exception | **Stop loop**, alert operator |
@@ -171,7 +174,7 @@ Communication: orchestrator → HTTP POST localhost:8080/issue-tickets → RPA a
 - **`SESSION_EXPIRED`** — detect PRIME login session timeout
 - **~~Round-trip ticket count~~** — resolved: PRIME returns 2 tickets per passenger (departure + return), comma-separated in one dialog. Code updated to split them correctly.
 - **~~Events table → BigQuery~~** — Done (April 5, 2026). 5 event types to `travelier-ai:oceanjet.booking_events`, service account auth, best-effort publishing.
-- **~~Multi-booking continuous mode~~** — Done (April 5, 2026). First-cycle validation guard removed, inter-booking pacing delays added (90–180s after approved bookings, no delay on skipped/errored), inter-passenger delays (5–15s). Target throughput: ~15 bookings/hour.
+- **~~Multi-booking continuous mode~~** — Done (April 5, 2026). First-cycle validation guard removed, inter-booking pacing delays added (30–90s after approved bookings, no delay on skipped/errored), inter-passenger delays (5–15s). Target throughput: ~15 bookings/hour.
 - **Automated cancellations** — P2
 - **Real-time inventory syncing** — P2
 - **Multi-operator expansion** — P2
