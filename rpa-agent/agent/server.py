@@ -143,6 +143,18 @@ async def issue_tickets(
         )
 
     except Exception as e:
+        # Detect PRIME window not found — likely crashed or restarted
+        from pywinauto.findwindows import ElementNotFoundError
+        if isinstance(e, ElementNotFoundError) or isinstance(e.__context__, ElementNotFoundError):
+            logger.error(f"PRIME window lost during booking {booking.bookingId} — may have crashed or restarted")
+            return TicketResult(
+                success=False,
+                departureTickets=[],
+                returnTickets=[],
+                errorCode=TicketErrorCode.PRIME_CRASH.value,
+                error="PRIME window lost — application may have crashed or restarted",
+            )
+
         logger.exception(f"Unexpected error processing booking {booking.bookingId}")
         return TicketResult(
             success=False,

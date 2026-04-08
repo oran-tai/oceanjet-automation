@@ -10,6 +10,7 @@ import io
 from google import genai
 from google.genai import types
 from pywinauto import Desktop, Application, timings
+from pywinauto.findwindows import ElementNotFoundError
 from pywinauto.keyboard import send_keys
 
 import random
@@ -41,6 +42,21 @@ class PrimeDriver:
             )
 
         self.gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+
+    def _reconnect(self):
+        """Re-connect to PRIME, picking up a potentially new process ID."""
+        logger.info("Attempting to reconnect to PRIME")
+        try:
+            self.app = Application(backend="uia").connect(
+                title=PRIME_WINDOW_TITLE, timeout=PRIME_TIMEOUT_SEC
+            )
+            self.main_window = self.app.window(title=PRIME_WINDOW_TITLE)
+            logger.info("Reconnected to PRIME")
+        except Exception as e:
+            raise PrimeError(
+                TicketErrorCode.PRIME_CRASH,
+                f"PRIME window lost and reconnect failed: {e}",
+            )
 
     def _call_gemini(self, prompt: str, image_bytes: bytes, max_retries: int = 3) -> str:
         """Call Gemini Vision with retry on transient errors (503, timeout, etc.)."""
@@ -1012,43 +1028,53 @@ class PrimeDriver:
         for pax_idx, pax, leg, trip_type, return_leg, label, leg_type in tasks:
             logger.info(f"--- {label} ---")
             try:
-                self.click_refresh()
+                # Inner retry: if PRIME window is lost, reconnect and retry once
+                for attempt in range(2):
+                    try:
+                        self.click_refresh()
 
-                # For connecting leg 2 (empty time), pass leg 1's arrival for dynamic selection
-                connecting_arrival = None
-                if not leg.get("time") and last_arrival_time:
-                    connecting_arrival = last_arrival_time
+                        # For connecting leg 2 (empty time), pass leg 1's arrival for dynamic selection
+                        connecting_arrival = None
+                        if not leg.get("time") and last_arrival_time:
+                            connecting_arrival = last_arrival_time
 
-                # Determine if we can skip trip field filling (voyage-only mode)
-                current_leg_key = self._leg_key(leg, trip_type, return_leg)
-                voyage_only = (
-                    not is_connecting
-                    and prev_leg_key is not None
-                    and current_leg_key == prev_leg_key
-                )
+                        # Determine if we can skip trip field filling (voyage-only mode)
+                        current_leg_key = self._leg_key(leg, trip_type, return_leg)
+                        voyage_only = (
+                            not is_connecting
+                            and prev_leg_key is not None
+                            and current_leg_key == prev_leg_key
+                        ) if attempt == 0 else False  # Force full fill after reconnect
 
-                # Set expected print previews for this task
-                self._expected_previews = 2 if leg_type == "round-trip" else 1
+                        # Set expected print previews for this task
+                        self._expected_previews = 2 if leg_type == "round-trip" else 1
 
-                voyage_result = self.fill_trip_details(
-                    leg, trip_type, return_leg=return_leg,
-                    connecting_arrival=connecting_arrival,
-                    voyage_only=voyage_only,
-                )
+                        voyage_result = self.fill_trip_details(
+                            leg, trip_type, return_leg=return_leg,
+                            connecting_arrival=connecting_arrival,
+                            voyage_only=voyage_only,
+                        )
 
-                # Store arrival time for connecting route leg 2 selection
-                if voyage_result and voyage_result.get("arrival_time"):
-                    last_arrival_time = voyage_result["arrival_time"]
+                        # Store arrival time for connecting route leg 2 selection
+                        if voyage_result and voyage_result.get("arrival_time"):
+                            last_arrival_time = voyage_result["arrival_time"]
 
-                try:
-                    self.fill_personal_details(pax, contact_info)
-                except _ctypes.COMError:
-                    # COMError means a popup is blocking the form (e.g. sold out)
-                    self._check_sold_out_after_voyage()
+                        try:
+                            self.fill_personal_details(pax, contact_info)
+                        except _ctypes.COMError:
+                            # COMError means a popup is blocking the form (e.g. sold out)
+                            self._check_sold_out_after_voyage()
 
-                # Click Issue, handle confirmation, capture ticket number(s)
-                self.click_issue()
-                ticket_numbers = self.handle_issue_result()
+                        # Click Issue, handle confirmation, capture ticket number(s)
+                        self.click_issue()
+                        ticket_numbers = self.handle_issue_result()
+                        break  # Success, exit retry loop
+                    except ElementNotFoundError:
+                        if attempt == 0:
+                            logger.warning(f"PRIME window lost during {label}, reconnecting and retrying")
+                            self._reconnect()
+                        else:
+                            raise
                 logger.info(f"Issued {len(ticket_numbers)} ticket(s) for {label}: {ticket_numbers}")
 
                 pax_results[pax_idx]["success"] = True
@@ -1077,7 +1103,13 @@ class PrimeDriver:
                     logger.info(f"Pacing delay: {delay}s before next passenger")
                     time.sleep(delay)
 
-            except PrimeError as e:
+            except (PrimeError, ElementNotFoundError) as e:
+                if isinstance(e, ElementNotFoundError):
+                    logger.error(f"PRIME window lost during {label}, converting to PRIME_CRASH")
+                    e = PrimeError(
+                        TicketErrorCode.PRIME_CRASH,
+                        "PRIME window lost — application may have crashed or restarted",
+                    )
                 has_failure = True
                 last_error_code = e.error_code
                 last_error_msg = e.message

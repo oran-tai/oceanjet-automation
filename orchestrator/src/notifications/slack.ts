@@ -65,7 +65,7 @@ export async function notifySystemFailure(
       : '') +
     `The automation has stopped. Please verify PRIME is online and re-login before restarting.`;
   logger.error('System failure alert', { reason, bookingReference });
-  await sendSlackMessage(message);
+  await sendSlackMessage(message, true);
 }
 
 export async function notifyPartialFailure(
@@ -122,5 +122,5 @@ export async function notifySessionExpired(): Promise<void> {
     `The automation detected that PRIME is logged out or the session has expired.\n` +
     `Please re-login to PRIME and restart the automation.`;
   logger.error('Session expired alert');
-  await sendSlackMessage(message);
+  await sendSlackMessage(message, true);
 }
