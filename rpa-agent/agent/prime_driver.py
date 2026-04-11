@@ -603,6 +603,106 @@ class PrimeDriver:
         logger.warning(f"Trip sold out: {error_msg}")
         raise PrimeError(TicketErrorCode.TRIP_SOLD_OUT, error_msg)
 
+    def _check_error_after_confirm(self):
+        """Handle case where no ticket popup appeared after Confirm → Yes.
+
+        Instead of immediately raising PRIME_TIMEOUT, screenshot the main
+        window to check if an error popup is visible (e.g. "No Business Class
+        seats available."). Uses Gemini Vision to read the popup text and
+        Trip Availability, same approach as _check_sold_out_after_voyage.
+
+        Popup is left open — caller's cleanup block handles dismissal.
+
+        Raises:
+            PrimeError: TRIP_SOLD_OUT if a sold-out popup is detected.
+            PrimeError: PRIME_TIMEOUT if no popup is visible at all.
+            PrimeError: PRIME_VALIDATION_ERROR for other error popups.
+        """
+        from PIL import ImageGrab
+
+        logger.warning("No ticket popup after confirm — checking for error popup")
+
+        # Screenshot the main window to see if anything is on screen
+        try:
+            self.main_window.set_focus()
+            time.sleep(0.3)
+            main_rect = self.main_window.rectangle()
+            screenshot = ImageGrab.grab(bbox=(
+                main_rect.left, main_rect.top, main_rect.right, main_rect.bottom
+            ))
+        except Exception as e:
+            logger.error(f"Failed to capture screenshot after confirm: {e}")
+            raise PrimeError(
+                TicketErrorCode.PRIME_TIMEOUT,
+                "No result dialog appeared after confirming Issue",
+            )
+
+        prompt = (
+            "This is a screenshot of a ferry ticketing system.\n"
+            "1. Is there a popup/dialog visible on top of the main form? "
+            "If yes, read the popup message text exactly as written. "
+            "If no popup is visible, respond with POPUP: NONE\n"
+            "2. Read the 'Trip Availability' section — find the 'Available' row and list the "
+            "seat counts for each class (TC, OA, BC).\n\n"
+            "Return in this exact format:\n"
+            "POPUP: <popup message text or NONE>\n"
+            "AVAILABLE: TC=<number>, OA=<number>, BC=<number>"
+        )
+
+        img_buffer = io.BytesIO()
+        screenshot.save(img_buffer, format="PNG")
+        image_bytes = img_buffer.getvalue()
+
+        popup_text = ""
+        availability_info = ""
+        try:
+            raw = self._call_gemini(prompt, image_bytes)
+            logger.info(f"Post-confirm check OCR result: {raw}")
+
+            for line in raw.split("\n"):
+                line = line.strip()
+                if line.upper().startswith("POPUP:"):
+                    popup_text = line[len("POPUP:"):].strip()
+                elif line.upper().startswith("AVAILABLE:"):
+                    availability_info = line[len("AVAILABLE:"):].strip()
+        except Exception as e:
+            logger.error(f"Gemini Vision failed for post-confirm check: {e}")
+            raise PrimeError(
+                TicketErrorCode.PRIME_TIMEOUT,
+                "No result dialog appeared after confirming Issue",
+            )
+
+        # No popup found by Gemini either — genuine timeout
+        if not popup_text or popup_text.upper() == "NONE":
+            raise PrimeError(
+                TicketErrorCode.PRIME_TIMEOUT,
+                "No result dialog appeared after confirming Issue",
+            )
+
+        # Popup found — check if it's a sold-out error
+        popup_lower = popup_text.lower()
+        is_sold_out = (
+            "sold out" in popup_lower
+            or "no available" in popup_lower
+            or "no seat" in popup_lower
+            or "seats available" in popup_lower
+        )
+
+        if is_sold_out:
+            parts = [popup_text]
+            if availability_info:
+                parts.append(f"Availability: {availability_info}")
+            error_msg = " — ".join(parts)
+            logger.warning(f"Trip sold out after confirm: {error_msg}")
+            raise PrimeError(TicketErrorCode.TRIP_SOLD_OUT, error_msg)
+
+        # Some other error popup — not sold-out, ticket was NOT issued
+        logger.error(f"Error popup after confirm: {popup_text}")
+        raise PrimeError(
+            TicketErrorCode.PRIME_VALIDATION_ERROR,
+            popup_text,
+        )
+
     def fill_personal_details(self, passenger, contact_info: str = ""):
         """Fill the Personal Details pane for one passenger.
 
@@ -755,10 +855,12 @@ class PrimeDriver:
             time.sleep(0.5)
 
         if result_dlg is None:
-            raise PrimeError(
-                TicketErrorCode.PRIME_TIMEOUT,
-                "No result dialog appeared after confirming Issue",
-            )
+            # No ticket code popup found — check if an error popup appeared
+            # instead (e.g. "No Business Class seats available.").
+            # Screenshot the main window and send to Gemini, same approach
+            # as _check_sold_out_after_voyage. Popup is left open for the
+            # caller's cleanup block to dismiss.
+            self._check_error_after_confirm()
 
         # Wait for the dialog to fully render
         time.sleep(1)
