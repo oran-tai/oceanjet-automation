@@ -69,7 +69,7 @@ Creates a `.stop` file that the orchestrator picks up between bookings — finis
 type C:\oceanjet-automation\orchestrator\.env
 ```
 
-## Important Conventions
+## Conventions
 - All credentials in `.env` only — never commit secrets
 - Each microservice has its own `.env` and `.env.example`
 - Bearer tokens are never logged
@@ -77,13 +77,29 @@ type C:\oceanjet-automation\orchestrator\.env
 - Station codes, accommodation codes, connecting routes are in `orchestrator/src/operators/oceanjet/config.ts`
 - Booking types: one-way, round-trip, connecting route (detected automatically by mapper)
 - RPA integration tests must be standalone scripts (not pytest) due to COM threading conflicts
-- Pacing: inter-booking delay (30–90s, orchestrator, only after approved bookings) + inter-passenger delay (5–15s, RPA agent) + booking error cooldown (24h default, `BOOKING_ERROR_COOLDOWN_MS`) for all booking-level errors
-- PRIME error popups are top-level desktop windows (not children of main window) — `_dismiss_error_popup()` uses desktop-level search + `set_focus()` + Enter. `_dismiss_same_station_dialog()` uses child window search (different UIA approach, do not merge them)
-- TRIP_SOLD_OUT: detected when popup blocks form interaction (COMError on gender combo), Gemini Vision reads popup text + seat availability
-- Gemini Vision calls: centralized in `_call_gemini()` with 3 retries and exponential backoff (2s, 4s) for transient 503/timeout errors
-- PRIME window loss recovery: `ElementNotFoundError` caught in task loop → `_reconnect()` re-binds to PRIME → retries current passenger once. If retry fails → `PRIME_CRASH` with partial results preserved
-- Dialog screenshots: `_read_dialog_via_screenshot()` calls `set_focus()` before `ImageGrab.grab()` to ensure correct window is captured
-- Station dropdown retry: if origin/destination `select()` fails, dismiss any blocking error popup and retry once before raising `STATION_NOT_FOUND`
-- Error cleanup: both system-level and booking-level errors run popup dismissal + form refresh before breaking, preventing cascading failures into the next booking
-- Slack webhooks: 2 webhooks configured (`SLACK_WEBHOOK_URL`, `SLACK_WEBHOOK_URL_2`). Booking-level alerts go to both, system-level alerts go to webhook 1 only. Each webhook retries 3x with 1s/2s backoff
-- BigQuery events: 5 types (`booking_claimed`, `booking_skipped`, `booking_failed`, `booking_approved`, `poll_cycle_completed`) to `travelier-ai:oceanjet.booking_events`. All failures use `booking_failed` with `error_code` to distinguish cause. Best-effort — never blocks main flow. Config: `BQ_PROJECT_ID`, `BQ_KEY_FILE`
+- PRIME dialog text is not accessible via UIA — use Gemini Vision screenshot OCR
+- Gemini Vision calls: centralized in `_call_gemini()` with retries and exponential backoff
+
+## RPA Error Handling — Key Patterns
+
+**Do not merge these two functions** — they handle different popup types via different UIA approaches:
+- `_dismiss_error_popup()`: desktop-level search + `set_focus()` + Enter (top-level popups)
+- `_dismiss_same_station_dialog()`: child window search on `main_window` (inline dialog)
+
+**Sold-out detection** has two trigger points:
+1. COMError on gender combo → popup blocking form → `_check_sold_out_after_voyage()`
+2. After Issue → Confirm → Yes, ticket popup never appears → `_check_error_after_confirm()`
+Both screenshot the main window, send to Gemini for popup text + seat availability (TC/OA/BC), and leave the popup open for the caller's cleanup block to dismiss.
+
+**Error cleanup**: all errors (booking + system level) run `_dismiss_error_popup()` + `click_refresh()` before breaking, preventing cascading failures into the next booking.
+
+**Station dropdown retry**: if `select()` fails, dismiss any blocking error popup and retry once before raising `STATION_NOT_FOUND`.
+
+## Pacing
+- Inter-booking delay: 30–90s (orchestrator, only after approved bookings)
+- Inter-passenger delay: 5–15s (RPA agent)
+- Booking error cooldown: 24h default (`BOOKING_ERROR_COOLDOWN_MS`), in-memory, resets on restart
+
+## Infrastructure
+- **Slack webhooks**: 2 webhooks (`SLACK_WEBHOOK_URL`, `SLACK_WEBHOOK_URL_2`). Booking-level alerts go to both, system-level alerts go to webhook 1 only. Each retries 3x with 1s/2s backoff
+- **BigQuery events**: 5 types (`booking_claimed`, `booking_skipped`, `booking_failed`, `booking_approved`, `poll_cycle_completed`) to `travelier-ai:oceanjet.booking_events`. All failures use `booking_failed` with `error_code`. Best-effort — never blocks main flow. Config: `BQ_PROJECT_ID`, `BQ_KEY_FILE`
