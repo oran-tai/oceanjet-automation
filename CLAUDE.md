@@ -82,9 +82,11 @@ type C:\oceanjet-automation\orchestrator\.env
 
 ## RPA Error Handling — Key Patterns
 
-**Do not merge these two functions** — they handle different popup types via different UIA approaches:
-- `_dismiss_error_popup()`: desktop-level search + `set_focus()` + Enter (top-level popups)
-- `_dismiss_same_station_dialog()`: child window search on `main_window` (inline dialog)
+**PRIME emits error popups in two shapes** — `_dismiss_error_popup()` handles both:
+1. Top-level desktop windows (e.g. 'Contact detail is required') — found via `Desktop().windows(title_re="OCEAN FAST FERRIES.*")` + width heuristic, dismissed with `set_focus()` + Enter
+2. Child dialogs of the main window (e.g. 'No Tourist Class seats available.' after Confirm → Yes) — found via `main_window.child_window(control_type="Window")`, dismissed by clicking the OK button
+
+`_dismiss_same_station_dialog()` is a separate helper for the 'Origin and Destination must not be the same' case — it's a fast inline dismiss on combo change, not an error-flow cleanup. Do not merge it into `_dismiss_error_popup()`.
 
 **Sold-out detection** has two trigger points:
 1. COMError on gender combo → popup blocking form → `_check_sold_out_after_voyage()`

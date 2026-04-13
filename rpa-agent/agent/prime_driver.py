@@ -123,11 +123,16 @@ class PrimeDriver:
         return key
 
     def _dismiss_error_popup(self):
-        """Dismiss a PRIME error/validation popup by focusing it and pressing Enter.
+        """Dismiss a PRIME error/validation popup.
 
-        These popups (e.g. 'No Open Air Seats Available', 'Contact detail is
-        required') are top-level desktop windows. We find the popup via
-        desktop-level search, bring it to focus, and press Enter to hit OK.
+        PRIME emits two families of error popups:
+        1. Top-level desktop windows (e.g. 'Contact detail is required')
+        2. Child dialogs of the main window (e.g. 'No Tourist Class seats
+           available.' after Confirm → Yes)
+
+        Both share the same title prefix ('OCEAN FAST FERRIES...') and an OK
+        button. We try the desktop-level search first, then fall back to a
+        child-window search on main_window.
         """
         try:
             desktop = Desktop(backend="uia")
@@ -137,11 +142,30 @@ class PrimeDriver:
                     w.set_focus()
                     time.sleep(0.3)
                     send_keys("{ENTER}")
-                    logger.info("Dismissed error popup")
+                    logger.info("Dismissed error popup (top-level)")
                     time.sleep(0.3)
-                    break
-        except Exception:
-            pass
+                    return
+        except Exception as e:
+            logger.debug(f"Top-level popup search failed: {e}")
+
+        try:
+            dlg = self.main_window.child_window(
+                title_re=".*OCEAN FAST FERRIES.*", control_type="Window"
+            )
+            if dlg.exists(timeout=0.5):
+                ok_btn = dlg.child_window(title="OK", control_type="Button")
+                if ok_btn.exists(timeout=0.5):
+                    ok_btn.click_input()
+                    logger.info("Dismissed error popup (child dialog)")
+                    time.sleep(0.3)
+                    return
+                dlg.set_focus()
+                time.sleep(0.3)
+                send_keys("{ENTER}")
+                logger.info("Dismissed error popup (child dialog, Enter fallback)")
+                time.sleep(0.3)
+        except Exception as e:
+            logger.debug(f"Child dialog popup search failed: {e}")
 
     def _dismiss_same_station_dialog(self):
         """Dismiss the 'Origin and Destination must not be the same' error dialog.
