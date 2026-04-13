@@ -103,5 +103,5 @@ Both screenshot the main window, send to Gemini for popup text + seat availabili
 - Booking error cooldown: 24h default (`BOOKING_ERROR_COOLDOWN_MS`), in-memory, resets on restart
 
 ## Infrastructure
-- **Slack webhooks**: 2 webhooks (`SLACK_WEBHOOK_URL`, `SLACK_WEBHOOK_URL_2`). Booking-level alerts go to both, system-level alerts go to webhook 1 only. Each retries 3x with 1s/2s backoff
+- **Slack webhooks**: 2 webhooks (`SLACK_WEBHOOK_URL`, `SLACK_WEBHOOK_URL_2`). Booking-level alerts go to both, system-level alerts go to webhook 1 only. Exceptions: `STATION_NOT_FOUND` booking failures go to webhook 1 only (listed in `PRIMARY_ONLY_BOOKING_ERRORS` in `slack.ts`). Each retries 3x with 1s/2s backoff
 - **BigQuery events**: 5 types (`booking_claimed`, `booking_skipped`, `booking_failed`, `booking_approved`, `poll_cycle_completed`) to `travelier-ai:oceanjet.booking_events`. All failures use `booking_failed` with `error_code`. Best-effort — never blocks main flow. Config: `BQ_PROJECT_ID`, `BQ_KEY_FILE`

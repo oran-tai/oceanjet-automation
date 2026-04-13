@@ -36,6 +36,10 @@ async function sendSlackMessage(text: string, primaryOnly = false): Promise<void
   );
 }
 
+const PRIMARY_ONLY_BOOKING_ERRORS: ReadonlySet<TicketErrorCode> = new Set([
+  'STATION_NOT_FOUND',
+]);
+
 export async function notifyBookingFailure(
   reference: string,
   bookingId: string,
@@ -50,7 +54,7 @@ export async function notifyBookingFailure(
     `*Details:* ${reason}\n` +
     `*Link:* <${bookawayLink}|Open in Bookaway>`;
   logger.warn('Booking failure alert', { reference, errorCode, reason });
-  await sendSlackMessage(message);
+  await sendSlackMessage(message, PRIMARY_ONLY_BOOKING_ERRORS.has(errorCode));
 }
 
 export async function notifySystemFailure(
