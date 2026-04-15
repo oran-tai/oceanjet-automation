@@ -39,6 +39,7 @@ export interface LocationInfo {
     name: string;
   };
   address: string;
+  name?: string;
 }
 
 // --- Single Booking Detail ---

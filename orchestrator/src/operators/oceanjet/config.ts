@@ -110,6 +110,27 @@ export function resolveStationCode(cityName: string): string | undefined {
 }
 
 /**
+ * Resolve a station code from a Bookaway location. Falls back to the
+ * city-name lookup, with per-island disambiguation where the city name
+ * maps to multiple PRIME stations.
+ */
+export function resolveStationFromLocation(location: {
+  city: { name: string };
+  name?: string;
+}): string | undefined {
+  const city = location.city.name.toLowerCase().trim();
+  const stationName = (location.name || '').toLowerCase();
+
+  // Bohol has three OceanJet ports (Tagbilaran, Jetafe, Tubigon) sharing
+  // the city name "Bohol". Disambiguate by station name before falling back.
+  if (city === 'bohol' && /jetafe|getafe/.test(stationName)) {
+    return 'GET';
+  }
+
+  return resolveStationCode(location.city.name);
+}
+
+/**
  * Look up an accommodation code from a Bookaway vehicle/line class.
  */
 export function resolveAccommodationCode(className: string): string | undefined {

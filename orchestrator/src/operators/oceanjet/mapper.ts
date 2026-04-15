@@ -6,7 +6,7 @@ import type {
   BookingType,
 } from '../types.js';
 import {
-  resolveStationCode,
+  resolveStationFromLocation,
   resolveAccommodationCode,
   findConnectingRoute,
 } from './config.js';
@@ -66,20 +66,17 @@ export function mapBookingToOceanJet(booking: BookingDetail): TranslatedBooking 
   }
 
   // Extract origin/destination from item.trip (actual API path)
-  const originCity = item.trip.fromId.city.name;
-  const destinationCity = item.trip.toId.city.name;
-
-  const originCode = resolveStationCode(originCity);
-  const destinationCode = resolveStationCode(destinationCity);
+  const originCode = resolveStationFromLocation(item.trip.fromId);
+  const destinationCode = resolveStationFromLocation(item.trip.toId);
 
   if (!originCode) {
     throw new Error(
-      `Unknown origin city: "${originCity}" (booking ${booking.reference})`
+      `Unknown origin city: "${item.trip.fromId.city.name}" (booking ${booking.reference})`
     );
   }
   if (!destinationCode) {
     throw new Error(
-      `Unknown destination city: "${destinationCity}" (booking ${booking.reference})`
+      `Unknown destination city: "${item.trip.toId.city.name}" (booking ${booking.reference})`
     );
   }
 

@@ -9,6 +9,8 @@ const GENDER_DEF = '58f47db102e97f000888b001';
 function makeBooking(overrides: Partial<{
   originCity: string;
   destinationCity: string;
+  originStationName: string;
+  destinationStationName: string;
   departureDate: string;
   departureTime: string;
   returnDepartureDate: string;
@@ -19,6 +21,8 @@ function makeBooking(overrides: Partial<{
   const {
     originCity = 'Cebu',
     destinationCity = 'Bohol',
+    originStationName,
+    destinationStationName,
     departureDate = 'Wed, Apr 15th 2026',
     departureTime = '13:00',
     returnDepartureDate,
@@ -59,8 +63,16 @@ function makeBooking(overrides: Partial<{
           lineClass,
         },
         trip: {
-          fromId: { city: { name: originCity }, address: '' },
-          toId: { city: { name: destinationCity }, address: '' },
+          fromId: {
+            city: { name: originCity },
+            address: '',
+            ...(originStationName ? { name: originStationName } : {}),
+          },
+          toId: {
+            city: { name: destinationCity },
+            address: '',
+            ...(destinationStationName ? { name: destinationStationName } : {}),
+          },
         },
         passengers,
       },
@@ -139,6 +151,26 @@ describe('mapBookingToOceanJet', () => {
     const booking = makeBooking({ lineClass: 'Business' });
     const result = mapBookingToOceanJet(booking);
     expect(result.departureLeg.accommodation).toBe('BC');
+  });
+
+  it('resolves Bohol to GET when the port name is Jetafe', () => {
+    const booking = makeBooking({
+      originCity: 'Cebu',
+      destinationCity: 'Bohol',
+      destinationStationName: 'Jetafe Port',
+    });
+    const result = mapBookingToOceanJet(booking);
+    expect(result.departureLeg.destination).toBe('GET');
+  });
+
+  it('resolves Bohol to TAG when the port name is not Jetafe', () => {
+    const booking = makeBooking({
+      originCity: 'Cebu',
+      destinationCity: 'Bohol',
+      destinationStationName: 'Tagbilaran Port',
+    });
+    const result = mapBookingToOceanJet(booking);
+    expect(result.departureLeg.destination).toBe('TAG');
   });
 
   it('maps real API city names', () => {
