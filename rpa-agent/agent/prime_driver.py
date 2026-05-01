@@ -646,16 +646,27 @@ class PrimeDriver:
 
         logger.warning("No ticket popup after confirm — checking for error popup")
 
-        # Screenshot the main window to see if anything is on screen
-        try:
-            self.main_window.set_focus()
-            time.sleep(0.3)
-            main_rect = self.main_window.rectangle()
-            screenshot = ImageGrab.grab(bbox=(
-                main_rect.left, main_rect.top, main_rect.right, main_rect.bottom
-            ))
-        except Exception as e:
-            logger.error(f"Failed to capture screenshot after confirm: {e}")
+        # Screenshot the main window to see if anything is on screen.
+        # Retry with focus — PRIME's UI thread may still be busy from the
+        # commit, leaving the main_window handle temporarily unreachable.
+        screenshot = None
+        for attempt in range(1, 4):
+            try:
+                self.main_window.set_focus()
+                time.sleep(0.3)
+                main_rect = self.main_window.rectangle()
+                screenshot = ImageGrab.grab(bbox=(
+                    main_rect.left, main_rect.top, main_rect.right, main_rect.bottom
+                ))
+                break
+            except Exception as e:
+                logger.warning(
+                    f"Failed to capture screenshot after confirm "
+                    f"(attempt {attempt}/3): {e}"
+                )
+                time.sleep(2)
+
+        if screenshot is None:
             raise PrimeError(
                 TicketErrorCode.PRIME_TIMEOUT,
                 "No result dialog appeared after confirming Issue",
@@ -844,6 +855,56 @@ class PrimeDriver:
         else:
             return self._handle_error_dialog(dialog)
 
+    def _scan_for_result_popup(self, desktop, timeout_sec: int):
+        """Poll for the small post-Issue result popup window.
+
+        The result popup uses the same title as the PRIME main window
+        ('OCEAN FAST FERRIES...'), so we discriminate by width — main
+        window is wide, result popups are narrow.
+
+        UIA can be flaky while PRIME's UI thread is busy committing the
+        ticket: enumeration may throw, or `rectangle()` on a transient
+        window may throw. We scope exception handling tightly so one
+        bad window doesn't abort an iteration, and log each failure so
+        future incidents leave a trace.
+        """
+        iterations = max(1, int(timeout_sec * 2))
+        enum_failures = 0
+        rect_failures = 0
+        for _ in range(iterations):
+            try:
+                windows = desktop.windows(title_re="OCEAN FAST FERRIES.*")
+            except Exception as e:
+                enum_failures += 1
+                logger.debug(f"desktop.windows() failed during result-popup scan: {e}")
+                time.sleep(0.5)
+                continue
+
+            for w in windows:
+                try:
+                    rect = w.rectangle()
+                except Exception as e:
+                    rect_failures += 1
+                    logger.debug(f"rectangle() failed on candidate window: {e}")
+                    continue
+                width = rect.right - rect.left
+                if width < 700:
+                    if enum_failures or rect_failures:
+                        logger.info(
+                            f"Result popup found after {enum_failures} enum / "
+                            f"{rect_failures} rect failures during scan"
+                        )
+                    return w
+            time.sleep(0.5)
+
+        if enum_failures or rect_failures:
+            logger.warning(
+                f"Result-popup scan timed out with {enum_failures} desktop.windows() "
+                f"failures and {rect_failures} rectangle() failures across "
+                f"{iterations} iterations — UIA was likely unstable"
+            )
+        return None
+
     def _handle_confirm_dialog(self, confirm_dlg, desktop) -> list[str]:
         """Click Yes on the confirmation dialog and handle the result."""
         logger.info("Confirmation dialog: 'Continue issuing ticket?' → clicking Yes")
@@ -855,28 +916,10 @@ class PrimeDriver:
             send_keys("{ENTER}")
 
         # Wait for PRIME to process the ticket — this can take a few seconds
-        time.sleep(3)
+        time.sleep(6)
 
-        # Now wait for the result dialog — success or error
-        # The success dialog has "Process Complete" text inside it.
-        # We need to read the text BEFORE clicking OK.
-        result_dlg = None
-        for attempt in range(PRIME_TIMEOUT_SEC * 2):
-            try:
-                windows = desktop.windows(title_re="OCEAN FAST FERRIES.*")
-                for w in windows:
-                    rect = w.rectangle()
-                    width = rect.right - rect.left
-                    if width < 700:
-                        # Found a small dialog — read its text to confirm
-                        # it's a result dialog (not the main window)
-                        result_dlg = w
-                        break
-                if result_dlg:
-                    break
-            except Exception:
-                pass
-            time.sleep(0.5)
+        # Now wait for the result dialog — success or error.
+        result_dlg = self._scan_for_result_popup(desktop, PRIME_TIMEOUT_SEC)
 
         if result_dlg is None:
             # No ticket code popup found — check if an error popup appeared
@@ -996,7 +1039,7 @@ class PrimeDriver:
         accidentally closing the PRIME Issue New Ticket tab.
         """
         expected = getattr(self, "_expected_previews", 1)
-        time.sleep(3)
+        time.sleep(6)
         closed_count = 0
 
         for _ in range(expected):
