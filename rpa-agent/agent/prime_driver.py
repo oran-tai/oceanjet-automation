@@ -628,45 +628,39 @@ class PrimeDriver:
         raise PrimeError(TicketErrorCode.TRIP_SOLD_OUT, error_msg)
 
     def _check_error_after_confirm(self):
-        """Handle case where no ticket popup appeared after Confirm → Yes.
+        """Resolve the post-Confirm state when the result-popup scan timed out.
 
-        Instead of immediately raising PRIME_TIMEOUT, screenshot the main
-        window to check if an error popup is visible (e.g. "No Business Class
-        seats available."). Uses Gemini Vision to read the popup text and
-        Trip Availability, same approach as _check_sold_out_after_voyage.
+        Screenshots the main window and OCRs it via Gemini Vision to read any
+        popup text. The popup might be:
+        - The success popup ('Process Complete. Ticket number [...]') that
+          our scan missed (UIA flake, race, etc.). In that case we re-scan
+          to recover the window handle and return it so the caller can run
+          the normal success path. If the rescan also fails to find the
+          window, we raise RPA_INTERNAL_ERROR with the codes we OCR'd, so a
+          human can reconcile manually.
+        - A sold-out error popup → raise TRIP_SOLD_OUT.
+        - Some other error popup → raise PRIME_VALIDATION_ERROR.
+        - No popup at all → raise PRIME_TIMEOUT.
 
-        Popup is left open — caller's cleanup block handles dismissal.
+        Returns:
+            The result popup window object if a success popup was detected
+            and recovered; the caller proceeds with the normal success flow.
 
         Raises:
-            PrimeError: TRIP_SOLD_OUT if a sold-out popup is detected.
-            PrimeError: PRIME_TIMEOUT if no popup is visible at all.
-            PrimeError: PRIME_VALIDATION_ERROR for other error popups.
+            PrimeError: TRIP_SOLD_OUT, PRIME_VALIDATION_ERROR, PRIME_TIMEOUT,
+                or RPA_INTERNAL_ERROR per the rules above.
         """
         from PIL import ImageGrab
 
         logger.warning("No ticket popup after confirm — checking for error popup")
 
-        # Screenshot the main window to see if anything is on screen.
-        # Retry with focus — PRIME's UI thread may still be busy from the
-        # commit, leaving the main_window handle temporarily unreachable.
-        screenshot = None
-        for attempt in range(1, 4):
-            try:
-                self.main_window.set_focus()
-                time.sleep(0.3)
-                main_rect = self.main_window.rectangle()
-                screenshot = ImageGrab.grab(bbox=(
-                    main_rect.left, main_rect.top, main_rect.right, main_rect.bottom
-                ))
-                break
-            except Exception as e:
-                logger.warning(
-                    f"Failed to capture screenshot after confirm "
-                    f"(attempt {attempt}/3): {e}"
-                )
-                time.sleep(2)
-
-        if screenshot is None:
+        # Capture full screen — no UIA calls. PRIME's UI thread may be busy
+        # committing the ticket, which blocks set_focus() / rectangle() but
+        # does NOT block OS-level pixel capture.
+        try:
+            screenshot = ImageGrab.grab()
+        except Exception as e:
+            logger.error(f"Failed to capture full-screen screenshot: {e}")
             raise PrimeError(
                 TicketErrorCode.PRIME_TIMEOUT,
                 "No result dialog appeared after confirming Issue",
@@ -714,8 +708,37 @@ class PrimeDriver:
                 "No result dialog appeared after confirming Issue",
             )
 
-        # Popup found — check if it's a sold-out error
         popup_lower = popup_text.lower()
+
+        # Popup is the success popup that our scan missed — recover the
+        # window handle and let the caller run the normal success flow.
+        is_success = "process complete" in popup_lower or "ticket number" in popup_lower
+        if is_success:
+            logger.warning(
+                f"Success popup detected via OCR fallback (initial scan missed it): "
+                f"{popup_text}"
+            )
+            desktop = Desktop(backend="uia")
+            result_dlg = self._scan_for_result_popup(desktop, 5)
+            if result_dlg is not None:
+                logger.info("Recovered result-popup window via fallback rescan")
+                return result_dlg
+
+            # Window not findable but Gemini saw it — extract codes from OCR
+            # and escalate to manual reconciliation.
+            bracket_content = re.findall(r"\[([^\]]+)\]", popup_text)
+            ticket_numbers = []
+            for content in bracket_content:
+                ticket_numbers.extend(re.findall(r"\d{7,}", content))
+            raise PrimeError(
+                TicketErrorCode.RPA_INTERNAL_ERROR,
+                f"CRITICAL: Ticket WAS issued (success popup detected via OCR) "
+                f"but window handle could not be recovered. "
+                f"Codes from OCR: {ticket_numbers}. Full popup text: {popup_text}. "
+                f"Manual approval on Bookaway required.",
+            )
+
+        # Popup found — check if it's a sold-out error
         is_sold_out = (
             "sold out" in popup_lower
             or "no available" in popup_lower
@@ -922,19 +945,19 @@ class PrimeDriver:
         result_dlg = self._scan_for_result_popup(desktop, PRIME_TIMEOUT_SEC)
 
         if result_dlg is None:
-            # No ticket code popup found — check if an error popup appeared
-            # instead (e.g. "No Business Class seats available.").
-            # Screenshot the main window and send to Gemini, same approach
-            # as _check_sold_out_after_voyage. Popup is left open for the
-            # caller's cleanup block to dismiss.
-            self._check_error_after_confirm()
+            # Scan timed out — fall back to OCR'ing the main window. This
+            # either recovers the success popup window (if our scan missed
+            # it due to UIA flake), or classifies the error popup and raises.
+            result_dlg = self._check_error_after_confirm()
 
         # Wait for the dialog to fully render
         time.sleep(1)
 
         # Screenshot the dialog and send to Gemini to read the text
-        # (Delphi paints the message directly — not accessible via UIA)
-        dialog_text = self._read_dialog_via_screenshot(result_dlg)
+        # (Delphi paints the message directly — not accessible via UIA).
+        # Use full_screen=True: PRIME's UI thread may still be busy from
+        # the commit, so a UIA-dependent bbox screenshot can fail.
+        dialog_text = self._read_dialog_via_screenshot(result_dlg, full_screen=True)
         logger.info(f"Result dialog text: {dialog_text}")
 
         if "Process Complete" in dialog_text or "Ticket number" in dialog_text:
@@ -991,30 +1014,50 @@ class PrimeDriver:
                 f"Dialog text: {dialog_text}. Manual intervention required.",
             )
 
-    def _read_dialog_via_screenshot(self, dialog) -> str:
+    def _read_dialog_via_screenshot(self, dialog, full_screen: bool = False) -> str:
         """Read text from a PRIME dialog by screenshotting it and sending to Gemini.
 
         Delphi dialogs paint their message text directly on the window surface
         rather than using accessible label controls, so we need OCR via Gemini.
+
+        Args:
+            dialog: pywinauto dialog handle. Used for the bbox screenshot
+                and as a window_text() fallback in non-full-screen mode.
+            full_screen: when True, capture full screen with no UIA calls.
+                Used in the post-Confirm path where PRIME's UI thread may
+                still be locked from the ticket commit, making set_focus()
+                and rectangle() throw.
         """
         from PIL import ImageGrab
 
-        try:
-            dialog.set_focus()
-            time.sleep(0.3)
-            rect = dialog.rectangle()
-            screenshot = ImageGrab.grab(bbox=(
-                rect.left, rect.top, rect.right, rect.bottom
-            ))
-        except Exception as e:
-            logger.error(f"Failed to capture dialog screenshot: {e}")
-            return dialog.window_text()
-
-        prompt = (
-            "This is a screenshot of a dialog box from a ferry ticketing system. "
-            "Read ALL the text shown in the dialog and return it exactly as written. "
-            "Include the full message text. Return ONLY the text content, nothing else."
-        )
+        if full_screen:
+            try:
+                screenshot = ImageGrab.grab()
+            except Exception as e:
+                logger.error(f"Failed to capture full-screen screenshot: {e}")
+                return ""
+            prompt = (
+                "This is a screenshot of a ferry ticketing system. "
+                "Find the small popup/dialog overlaying the main form and read "
+                "ALL the text shown in that popup exactly as written. "
+                "Return ONLY the popup text content, nothing else."
+            )
+        else:
+            try:
+                dialog.set_focus()
+                time.sleep(0.3)
+                rect = dialog.rectangle()
+                screenshot = ImageGrab.grab(bbox=(
+                    rect.left, rect.top, rect.right, rect.bottom
+                ))
+            except Exception as e:
+                logger.error(f"Failed to capture dialog screenshot: {e}")
+                return dialog.window_text()
+            prompt = (
+                "This is a screenshot of a dialog box from a ferry ticketing system. "
+                "Read ALL the text shown in the dialog and return it exactly as written. "
+                "Include the full message text. Return ONLY the text content, nothing else."
+            )
 
         img_buffer = io.BytesIO()
         screenshot.save(img_buffer, format="PNG")
@@ -1027,6 +1070,8 @@ class PrimeDriver:
         except Exception as e:
             logger.error(f"Gemini Vision API call failed for dialog: {e}")
 
+        if full_screen:
+            return ""
         return dialog.window_text()
 
     def _close_print_preview(self, desktop):
