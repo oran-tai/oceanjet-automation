@@ -715,13 +715,16 @@ class PrimeDriver:
         popup_text, availability_info = self._ocr_post_confirm_screen()
 
         # If Gemini saw no popup, PRIME may still be committing the ticket —
-        # the popup just hasn't been emitted yet. Wait and try once more
-        # before declaring a genuine timeout. (Observed: PRIME has taken
-        # 60+ seconds to emit the result popup under load.)
-        if not popup_text or popup_text.upper() == "NONE":
+        # the popup just hasn't been emitted yet. Sleep + re-OCR up to 2
+        # more times (60s of additional waiting) before declaring a genuine
+        # timeout. Observed: PRIME has taken 60+ seconds to emit the result
+        # popup under load.
+        for retry in range(1, 3):
+            if popup_text and popup_text.upper() != "NONE":
+                break
             logger.warning(
-                "OCR found no popup on first attempt — sleeping 30s and retrying "
-                "in case PRIME is still committing the ticket"
+                f"OCR found no popup (attempt {retry}/2 retry) — sleeping 30s "
+                f"and retrying in case PRIME is still committing the ticket"
             )
             time.sleep(30)
             popup_text, availability_info = self._ocr_post_confirm_screen()
