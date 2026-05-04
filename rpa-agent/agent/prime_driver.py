@@ -627,36 +627,20 @@ class PrimeDriver:
         logger.warning(f"Trip sold out: {error_msg}")
         raise PrimeError(TicketErrorCode.TRIP_SOLD_OUT, error_msg)
 
-    def _check_error_after_confirm(self):
-        """Resolve the post-Confirm state when the result-popup scan timed out.
+    def _ocr_post_confirm_screen(self) -> tuple[str, str]:
+        """Take a full-screen screenshot and OCR it for popup + availability.
 
-        Screenshots the main window and OCRs it via Gemini Vision to read any
-        popup text. The popup might be:
-        - The success popup ('Process Complete. Ticket number [...]') that
-          our scan missed (UIA flake, race, etc.). In that case we re-scan
-          to recover the window handle and return it so the caller can run
-          the normal success path. If the rescan also fails to find the
-          window, we raise RPA_INTERNAL_ERROR with the codes we OCR'd, so a
-          human can reconcile manually.
-        - A sold-out error popup → raise TRIP_SOLD_OUT.
-        - Some other error popup → raise PRIME_VALIDATION_ERROR.
-        - No popup at all → raise PRIME_TIMEOUT.
-
-        Returns:
-            The result popup window object if a success popup was detected
-            and recovered; the caller proceeds with the normal success flow.
+        Full-screen capture (no UIA calls) so it works even when PRIME's
+        UI thread is busy committing the ticket. Returns a tuple of
+        (popup_text, availability_info). Either may be an empty string
+        if Gemini didn't return that line. popup_text is the literal
+        Gemini response — caller must check for "NONE" / empty itself.
 
         Raises:
-            PrimeError: TRIP_SOLD_OUT, PRIME_VALIDATION_ERROR, PRIME_TIMEOUT,
-                or RPA_INTERNAL_ERROR per the rules above.
+            PrimeError(PRIME_TIMEOUT) if the screenshot or Gemini call fails.
         """
         from PIL import ImageGrab
 
-        logger.warning("No ticket popup after confirm — checking for error popup")
-
-        # Capture full screen — no UIA calls. PRIME's UI thread may be busy
-        # committing the ticket, which blocks set_focus() / rectangle() but
-        # does NOT block OS-level pixel capture.
         try:
             screenshot = ImageGrab.grab()
         except Exception as e:
@@ -701,7 +685,48 @@ class PrimeDriver:
                 "No result dialog appeared after confirming Issue",
             )
 
-        # No popup found by Gemini either — genuine timeout
+        return popup_text, availability_info
+
+    def _check_error_after_confirm(self):
+        """Resolve the post-Confirm state when the result-popup scan timed out.
+
+        Screenshots the main window and OCRs it via Gemini Vision to read any
+        popup text. The popup might be:
+        - The success popup ('Process Complete. Ticket number [...]') that
+          our scan missed (UIA flake, race, etc.). In that case we re-scan
+          to recover the window handle and return it so the caller can run
+          the normal success path. If the rescan also fails to find the
+          window, we raise RPA_INTERNAL_ERROR with the codes we OCR'd, so a
+          human can reconcile manually.
+        - A sold-out error popup → raise TRIP_SOLD_OUT.
+        - Some other error popup → raise PRIME_VALIDATION_ERROR.
+        - No popup at all → raise PRIME_TIMEOUT.
+
+        Returns:
+            The result popup window object if a success popup was detected
+            and recovered; the caller proceeds with the normal success flow.
+
+        Raises:
+            PrimeError: TRIP_SOLD_OUT, PRIME_VALIDATION_ERROR, PRIME_TIMEOUT,
+                or RPA_INTERNAL_ERROR per the rules above.
+        """
+        logger.warning("No ticket popup after confirm — checking for error popup")
+
+        popup_text, availability_info = self._ocr_post_confirm_screen()
+
+        # If Gemini saw no popup, PRIME may still be committing the ticket —
+        # the popup just hasn't been emitted yet. Wait and try once more
+        # before declaring a genuine timeout. (Observed: PRIME has taken
+        # 60+ seconds to emit the result popup under load.)
+        if not popup_text or popup_text.upper() == "NONE":
+            logger.warning(
+                "OCR found no popup on first attempt — sleeping 30s and retrying "
+                "in case PRIME is still committing the ticket"
+            )
+            time.sleep(30)
+            popup_text, availability_info = self._ocr_post_confirm_screen()
+
+        # Still no popup — genuine timeout
         if not popup_text or popup_text.upper() == "NONE":
             raise PrimeError(
                 TicketErrorCode.PRIME_TIMEOUT,
