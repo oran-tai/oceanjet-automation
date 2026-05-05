@@ -1324,20 +1324,22 @@ class PrimeDriver:
             # it due to UIA flake), or classifies the error popup and raises.
             result_dlg = self._check_error_after_confirm()
 
-        # OCR the popup. Retry if first attempt sees no popup — popup may
-        # still be rendering, briefly covered by print preview, etc. Each
-        # retry takes a fresh screenshot.
+        # OCR the popup. Retry if first attempt sees no popup — UIA may have
+        # found the popup window before PRIME finished rendering its pixels
+        # (observed: 30s+ gap between window-create and text-paint under load).
+        # 5 attempts × 30s sleeps = ~2.5min budget — enough for the delays
+        # we've observed, still bounded.
         parsed = None
-        for attempt in range(1, 4):
+        for attempt in range(1, 6):
             time.sleep(1)
             parsed = self._read_post_confirm_popup()
             if parsed["popup_visible"]:
                 break
             logger.warning(
-                f"Post-Confirm OCR found no popup (attempt {attempt}/3) — "
-                f"sleeping 2s and retrying"
+                f"Post-Confirm OCR found no popup (attempt {attempt}/5) — "
+                f"sleeping 30s and retrying"
             )
-            time.sleep(2)
+            time.sleep(30)
 
         if not parsed["popup_visible"]:
             # Never click OK on the popup when we can't read it — clicking OK
