@@ -318,9 +318,18 @@ class PrimeDriver:
             logger.info(
                 f"Selecting return voyage: {return_leg['time']}"
             )
-            # Return voyage search (button[0])
-            return_search_btn = buttons[0]
-            return_search_btn.click_input()
+            # Late-bind: trip-details pane redraws after departure voyage commits, staling buttons[]
+            for attempt in range(2):
+                try:
+                    return_search_btn = trip_details.children(control_type="Button")[0]
+                    return_search_btn.click_input()
+                    break
+                except _ctypes.COMError:
+                    if attempt == 0:
+                        logger.warning("Return search button stale, re-binding and retrying")
+                        time.sleep(0.3)
+                    else:
+                        raise
             time.sleep(1)
 
             # Select return voyage via Gemini Vision (with caching)
