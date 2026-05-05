@@ -464,6 +464,21 @@ class PrimeDriver:
                     for content in bracket_content:
                         codes.extend(re.findall(r"\d{7,}", content))
 
+        # If Gemini saw no popup, save the screenshot so we can diagnose
+        # later — these are the cases that previously caused silent code loss.
+        if not popup_visible:
+            try:
+                from datetime import datetime
+                from pathlib import Path
+                debug_dir = Path("debug")
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                debug_path = debug_dir / f"post_confirm_no_popup_{timestamp}.png"
+                screenshot.save(debug_path, format="PNG")
+                logger.info(f"Saved debug screenshot (no popup detected): {debug_path}")
+            except Exception as save_e:
+                logger.debug(f"Failed to save debug screenshot: {save_e}")
+
         return {
             "popup_visible": popup_visible,
             "is_success": is_success,
@@ -490,8 +505,11 @@ class PrimeDriver:
         try:
             combo.select(station_name)
             return
-        except Exception:
-            pass
+        except Exception as select_e:
+            logger.warning(
+                f"{role.capitalize()} station-select failed for "
+                f"'{station_name}': {select_e} — invoking blocker classifier"
+            )
 
         blocker = self._classify_form_blocker()
 
@@ -1264,11 +1282,15 @@ class PrimeDriver:
                     continue
                 width = rect.right - rect.left
                 if width < 700:
-                    if enum_failures or rect_failures:
-                        logger.info(
-                            f"Result popup found after {enum_failures} enum / "
-                            f"{rect_failures} rect failures during scan"
+                    logger.info(
+                        f"Result popup found in UIA: title='{w.window_text()}', "
+                        f"width={width}, rect=({rect.left},{rect.top},{rect.right},{rect.bottom})"
+                        + (
+                            f" (after {enum_failures} enum / {rect_failures} rect failures)"
+                            if (enum_failures or rect_failures)
+                            else ""
                         )
+                    )
                     return w
             time.sleep(0.5)
 
