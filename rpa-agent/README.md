@@ -127,7 +127,7 @@ Returns `TicketResult` with `departureTickets`, `returnTickets`, and per-passeng
 
 | Error Code | Type | Trigger |
 |---|---|---|
-| `STATION_NOT_FOUND` | Booking | Station not in PRIME dropdown |
+| `STATION_NOT_FOUND` | Booking | Station not in PRIME dropdown (after blocker classifier rules out other causes) |
 | `TRIP_NOT_FOUND` | Booking | Voyage grid is empty |
 | `VOYAGE_TIME_MISMATCH` | Booking | No voyage matches departure time |
 | `ACCOMMODATION_UNAVAILABLE` | Booking | Accommodation not in dropdown |
@@ -138,4 +138,16 @@ Returns `TicketResult` with `departureTickets`, `returnTickets`, and per-passeng
 | `PRIME_CRASH` | System | Can't connect to PRIME |
 | `SESSION_EXPIRED` | System | PRIME login timed out |
 | `RPA_INTERNAL_ERROR` | System | Screenshot/API/internal failure |
+| `ORPHAN_TICKET_DETECTED` | System | Late-arriving success popup found by cleanup or station-select recovery — codes + pax name preserved in Slack alert for manual reconciliation |
 | `UNKNOWN_ERROR` | System | Unhandled exception |
+
+## Debug Artifacts
+
+When the post-Confirm OCR can't see a popup overlaying the form, the agent saves the screenshot Gemini saw to `debug/post_confirm_no_popup_<timestamp>.png` (folder auto-created in the agent's working directory). Useful for diagnosing OCR misclassifications retroactively without reproducing.
+
+Two debug helpers run the same OCR prompts against an ad-hoc screenshot:
+
+```batch
+py screenshot_debug.py --ocr                  # post-Confirm fallback prompt (POPUP / AVAILABLE)
+py screenshot_debug_result_dialog.py --ocr    # result-dialog prompt used in _handle_confirm_dialog
+```

@@ -1,6 +1,6 @@
 # OceanJet Automation — Implementation Status
 
-**Last updated:** April 8, 2026
+**Last updated:** May 6, 2026
 
 ---
 
@@ -105,8 +105,8 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
 - Dialog text reading via Gemini Vision screenshot (Delphi paints text directly, not accessible via UIA)
 - Print preview auto-close after each ticket issuance (loops only for expected count: 1 for one-way, 2 for round-trip)
 - Handles all 4 booking types (one-way, round-trip, connecting-one-way, connecting-round-trip)
-- Error detection: all 12 error codes implemented
-- Critical safety: failed ticket capture after Confirm → RPA_INTERNAL_ERROR (system-level stop)
+- Error detection: all 13 error codes implemented (including `ORPHAN_TICKET_DETECTED` for late-arriving success popups)
+- Critical safety: failed ticket capture after Confirm → RPA_INTERNAL_ERROR (system-level stop). Late-arriving success popups → `ORPHAN_TICKET_DETECTED` with codes + pax name preserved (May 5, 2026)
 - All errors (booking + system) stop processing remaining passengers, with popup cleanup before breaking to prevent cascading failures
 - TARGET_BOOKING mode: process a single booking by reference, then stop
 - Slack notifications for all failure types (dual webhook with 3x retry per webhook)
@@ -124,12 +124,14 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
   - **Inter-passenger pacing** (April 5, 2026): Random 5–15s delay between ticket issuances within the same booking (`PASSENGER_DELAY_MIN_S` / `PASSENGER_DELAY_MAX_S`)
   - **Sold-out popup detection** (April 5, 2026): When PRIME shows a "No seats available" popup after voyage selection, it blocks form interaction (COMError). RPA catches this, screenshots the main window, uses Gemini Vision to read both popup text and Trip Availability seat counts (TC/OA/BC), dismisses the popup, and raises `TRIP_SOLD_OUT` with availability details for Slack alerts
   - **Error popup dismissal**: Separate `_dismiss_error_popup()` (desktop-level search + `set_focus()` + Enter key) from `_dismiss_same_station_dialog()` (child window search) — different popup types require different UIA approaches
+  - **Post-Confirm hardening** (May 5–6, 2026): added `ORPHAN_TICKET_DETECTED` system error for late-arriving success popups; replaced free-form result-dialog OCR with structured `_read_post_confirm_popup()` (POPUP/TEXT/CODES/FIRST_NAME/LAST_NAME); 5-attempt × 30s OCR retry budget (~2.5min); per-call Gemini timeout (60s, 3 retries → ~186s worst case) to prevent stale screenshots from stuck calls; `_dismiss_error_popup()` now classifies via Gemini before pressing Enter and refuses to dismiss success popups; debug screenshots auto-saved to `debug/post_confirm_no_popup_*.png` whenever OCR returns no popup
+  - **Late-bind UIA handles** (May 4, 2026): return-leg search button is re-fetched immediately before clicking instead of using a stale handle from earlier in `fill_trip_details` — survives PRIME pane redraws after departure voyage commit
 
-**Error Code Status (12 total):**
+**Error Code Status (13 total):**
 
 | Error Code | Type | Implemented? | Tested? | Slack Alert? | How it's triggered | Orchestrator behavior |
 |---|---|---|---|---|---|---|
-| `STATION_NOT_FOUND` | Booking | Yes | **VM passed** | Always | Origin/destination not in PRIME dropdown | Release booking, stop loop |
+| `STATION_NOT_FOUND` | Booking | Yes | **VM passed** | Always | Origin/destination not in PRIME dropdown — only after blocker classifier rules out success popup, print preview, error popup | Release booking, stop loop |
 | `TRIP_NOT_FOUND` | Booking | Yes | **VM passed** | Only if departure ≤ 7 days | Voyage Schedule grid is empty | Release booking, stop loop |
 | `VOYAGE_TIME_MISMATCH` | Booking | Yes | **VM passed** | Always | No voyage matches departure time | Release booking, stop loop |
 | `ACCOMMODATION_UNAVAILABLE` | Booking | Yes | **VM passed** | Always | Accommodation code not in dropdown | Release booking, stop loop |
@@ -140,9 +142,10 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
 | `PRIME_CRASH` | System | Yes | — | Always | Can't connect to PRIME process, or window lost mid-booking (after reconnect retry fails) | **Stop loop**, alert operator |
 | `SESSION_EXPIRED` | System | No | — | Always | PRIME login session timed out | **Stop loop**, alert operator |
 | `RPA_INTERNAL_ERROR` | System | Yes | — | Always | Screenshot/API/internal failure, failed ticket capture | **Stop loop**, alert operator |
+| `ORPHAN_TICKET_DETECTED` | System | Yes | — | Always | Late-arriving success popup found by cleanup or station-select recovery — Gemini reads codes + pax First/Last Name from the form behind the popup. Codes preserved in Slack alert for manual reconciliation. | **Stop loop**, alert operator |
 | `UNKNOWN_ERROR` | Catch-all | Yes | — | Always | Unexpected unhandled exception | **Stop loop**, alert operator |
 
-**Score:** 11/12 implemented, 6/12 tested (5 VM + 1 unit test).
+**Score:** 12/13 implemented, 6/13 tested (5 VM + 1 unit test).
 
 **Not yet implemented:** `SESSION_EXPIRED` (requires PRIME session timeout detection).
 

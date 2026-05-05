@@ -201,6 +201,7 @@ The agent must map what it observes in PRIME's UI to one of these error codes:
 | PRIME process disappears | `PRIME_CRASH` |
 | Login screen appears during operation | `SESSION_EXPIRED` |
 | Agent internal exception | `RPA_INTERNAL_ERROR` |
+| Late-arriving success popup found by cleanup or station-select recovery (codes preserved) | `ORPHAN_TICKET_DETECTED` |
 | Can't classify the failure | `UNKNOWN_ERROR` |
 
 ## PRIME UI Flow (per passenger)
@@ -406,7 +407,7 @@ All failures emit `booking_failed` — the `error_code` field distinguishes the 
 | Category | Error codes |
 |---|---|
 | Booking-level (release + continue) | `PASSENGER_VALIDATION_ERROR`, `STATION_NOT_FOUND`, `TRIP_NOT_FOUND`, `TRIP_SOLD_OUT`, `VOYAGE_TIME_MISMATCH`, `ACCOMMODATION_UNAVAILABLE`, `PRIME_VALIDATION_ERROR`, `UNKNOWN_ERROR` |
-| System-level (release + stop) | `PRIME_TIMEOUT`, `PRIME_CRASH`, `SESSION_EXPIRED`, `RPA_INTERNAL_ERROR` |
+| System-level (release + stop) | `PRIME_TIMEOUT`, `PRIME_CRASH`, `SESSION_EXPIRED`, `RPA_INTERNAL_ERROR`, `ORPHAN_TICKET_DETECTED` |
 | Approval (keep claimed) | `APPROVAL_FAILED` |
 
 ### Dashboard Metrics

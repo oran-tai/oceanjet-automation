@@ -78,24 +78,39 @@ type C:\oceanjet-automation\orchestrator\.env
 - Booking types: one-way, round-trip, connecting route (detected automatically by mapper)
 - RPA integration tests must be standalone scripts (not pytest) due to COM threading conflicts
 - PRIME dialog text is not accessible via UIA — use Gemini Vision screenshot OCR
-- Gemini Vision calls: centralized in `_call_gemini()` with retries and exponential backoff
+- Gemini Vision calls: centralized in `_call_gemini()` with 3 retries, exponential backoff, and a 60s per-call timeout (prevents stuck calls from leaving stale screenshots)
 
 ## RPA Error Handling — Key Patterns
 
-**PRIME emits error popups in two shapes** — `_dismiss_error_popup()` handles both:
-1. Top-level desktop windows (e.g. 'Contact detail is required') — found via `Desktop().windows(title_re="OCEAN FAST FERRIES.*")` + width heuristic, dismissed with `set_focus()` + Enter
-2. Child dialogs of the main window (e.g. 'No Tourist Class seats available.' after Confirm → Yes) — found via `main_window.child_window(control_type="Window")`, dismissed by clicking the OK button
+**Three Gemini OCR call sites in the post-Confirm / blocker-detection code:**
+1. `_read_post_confirm_popup()` — used by `_handle_confirm_dialog` after Yes-on-Confirm. Structured prompt (`POPUP: SUCCESS|ERROR|NONE` + `TEXT` / `CODES` / `FIRST_NAME` / `LAST_NAME`). Explicit "respond NONE if no popup is visible — do NOT describe form contents" to prevent the form rates panel from being misread as popup text. Saves the screenshot to `debug/post_confirm_no_popup_*.png` whenever it returns no popup so we can diagnose retroactively.
+2. `_ocr_post_confirm_screen()` — used inside `_check_error_after_confirm` when the UIA scan times out. Looks for popup + seat availability (TC/OA/BC). 10-retry × 30s sleeps (~5min budget).
+3. `_classify_form_blocker()` — used on station-select failure and inside `_dismiss_error_popup`. Four-way classification: `success_popup` / `print_preview` / `error_popup` / `none`. When `success_popup`, also reads `First Name` / `Last Name` from the form behind the popup so orphan tickets carry the pax identity.
 
-`_dismiss_same_station_dialog()` is a separate helper for the 'Origin and Destination must not be the same' case — it's a fast inline dismiss on combo change, not an error-flow cleanup. Do not merge it into `_dismiss_error_popup()`.
+**`_handle_confirm_dialog` retry budget:** 5 OCR attempts × 30s sleeps (~2.5min) when no popup is visible — UIA finds the popup window before PRIME finishes painting its pixels (observed: 30s+ window-create-to-text-paint gap under load). Never clicks OK on the popup when classification fails — leaves it for the safe cleanup block.
+
+**`_dismiss_error_popup()` is popup-aware** — refuses to dismiss success popups:
+- Finds candidate small `OCEAN FAST FERRIES` window (top-level or child of main window)
+- Calls `_classify_form_blocker()` before pressing Enter / clicking OK
+- If `success_popup` → returns `{codes, first_name, last_name, text}` instead of dismissing
+- Otherwise dismisses as before
+- Caller responsibility: convert the returned dict into `ORPHAN_TICKET_DETECTED` so codes are preserved for manual reconciliation
+
+**`_dismiss_same_station_dialog()`** is a separate helper for the 'Origin and Destination must not be the same' case — a fast inline dismiss on combo change, not an error-flow cleanup. Do not merge it into `_dismiss_error_popup()`.
 
 **Sold-out detection** has two trigger points:
 1. COMError on gender combo → popup blocking form → `_check_sold_out_after_voyage()`
 2. After Issue → Confirm → Yes, ticket popup never appears → `_check_error_after_confirm()`
 Both screenshot the main window, send to Gemini for popup text + seat availability (TC/OA/BC), and leave the popup open for the caller's cleanup block to dismiss.
 
-**Error cleanup**: all errors (booking + system level) run `_dismiss_error_popup()` + `click_refresh()` before breaking, preventing cascading failures into the next booking.
+**Orphan ticket detection** (`ORPHAN_TICKET_DETECTED`, system-level error):
+1. Most reliable: cleanup-block `_dismiss_error_popup()` discovers a late-arriving success popup → upgrades the passenger's error to `ORPHAN_TICKET_DETECTED` with codes + pax name from the form, then safely dismisses (codes already preserved) so the next booking starts clean
+2. Cross-booking: next booking's first station-select fails → `_select_station_with_recovery` calls classifier → success popup detected → raise `ORPHAN_TICKET_DETECTED` with codes + pax name
+Slack alert includes the ticket codes and pax First/Last Name (read by Gemini from the form behind the popup) so the operator can reconcile manually in Bookaway.
 
-**Station dropdown retry**: if `select()` fails, dismiss any blocking error popup and retry once before raising `STATION_NOT_FOUND`.
+**Error cleanup**: all errors run `_dismiss_error_popup()` (now popup-aware) + `click_refresh()` before breaking. If `_dismiss_error_popup` returns a dict (orphan detected), cleanup upgrades the error to `ORPHAN_TICKET_DETECTED` and then dismisses safely.
+
+**Station dropdown retry**: if `select()` fails, `_select_station_with_recovery` classifies the blocker via Gemini and dispatches: success_popup → raise `ORPHAN_TICKET_DETECTED`, print_preview → close, error_popup → dismiss + retry, none → retry anyway then raise `STATION_NOT_FOUND`.
 
 ## Pacing
 - Inter-booking delay: 30–90s (orchestrator, only after approved bookings)
