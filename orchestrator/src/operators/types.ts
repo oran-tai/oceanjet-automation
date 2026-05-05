@@ -19,6 +19,7 @@ export type TicketErrorCode =
   | 'PRIME_CRASH'                 // PRIME application crashed
   | 'SESSION_EXPIRED'             // PRIME login session expired
   | 'RPA_INTERNAL_ERROR'          // RPA agent hit an internal error
+  | 'ORPHAN_TICKET_DETECTED'      // Found an unhandled success popup with codes — manual reconciliation required
   // Catch-all
   | 'UNKNOWN_ERROR';              // Unclassified error
 
@@ -35,6 +36,7 @@ export const TICKET_ERROR_LABELS: Record<TicketErrorCode, string> = {
   PRIME_CRASH: 'PRIME application crashed',
   SESSION_EXPIRED: 'PRIME login session has expired',
   RPA_INTERNAL_ERROR: 'RPA agent encountered an internal error',
+  ORPHAN_TICKET_DETECTED: 'Orphan success popup found with ticket codes — manual reconciliation required',
   UNKNOWN_ERROR: 'An unclassified error occurred',
 };
 
@@ -44,6 +46,7 @@ export const SYSTEM_ERROR_CODES: ReadonlySet<TicketErrorCode> = new Set([
   'PRIME_CRASH',
   'SESSION_EXPIRED',
   'RPA_INTERNAL_ERROR',
+  'ORPHAN_TICKET_DETECTED',
 ]);
 
 export interface PassengerData {

@@ -202,6 +202,148 @@ class PrimeDriver:
                 f"Failed to click Refresh: {e}",
             )
 
+    def _classify_form_blocker(self) -> dict:
+        """Screenshot the screen and ask Gemini what (if anything) is blocking the main form.
+
+        For success popups, also reads the First Name / Last Name fields from
+        the underlying form so we can identify which passenger the orphan
+        ticket belongs to.
+
+        Returns a dict with:
+            type: "success_popup" | "print_preview" | "error_popup" | "none"
+            text: popup message text (empty for print_preview / none)
+            codes: list[str] of ticket codes if success_popup, else []
+            first_name: pax First Name from form (success_popup only, else "")
+            last_name: pax Last Name from form (success_popup only, else "")
+        """
+        from PIL import ImageGrab
+
+        try:
+            screenshot = ImageGrab.grab()
+        except Exception as e:
+            logger.error(f"Failed to capture screenshot for form-blocker classification: {e}")
+            return {"type": "none", "text": "", "codes": [], "first_name": "", "last_name": ""}
+
+        prompt = (
+            "This is a screenshot of a ferry ticketing system. The main form for "
+            "ticket entry should be visible. Determine what (if anything) is "
+            "blocking or covering the main form:\n"
+            "1. SUCCESS_POPUP — a small dialog containing 'Process Complete' or "
+            "'Ticket number(s):' with codes in square brackets like [12345678]\n"
+            "2. PRINT_PREVIEW — a Report Preview, Print Preview, or Preview window "
+            "covering the form\n"
+            "3. ERROR_POPUP — any other small dialog (error message, validation, "
+            "confirmation)\n"
+            "4. NONE — the main form is fully accessible, no dialogs or previews on top\n\n"
+            "If TYPE is SUCCESS_POPUP, ALSO read the 'First Name' and 'Last Name' "
+            "fields from the Personal Details section of the form behind the popup.\n\n"
+            "Return in this exact format:\n"
+            "TYPE: <SUCCESS_POPUP|PRINT_PREVIEW|ERROR_POPUP|NONE>\n"
+            "TEXT: <popup text if present, or empty>\n"
+            "CODES: <comma-separated ticket numbers if SUCCESS_POPUP, else empty>\n"
+            "FIRST_NAME: <First Name field value if SUCCESS_POPUP, else empty>\n"
+            "LAST_NAME: <Last Name field value if SUCCESS_POPUP, else empty>"
+        )
+
+        img_buffer = io.BytesIO()
+        screenshot.save(img_buffer, format="PNG")
+        image_bytes = img_buffer.getvalue()
+
+        try:
+            raw = self._call_gemini(prompt, image_bytes)
+            logger.info(f"Form-blocker classification: {raw}")
+        except Exception as e:
+            logger.error(f"Gemini classification failed: {e}")
+            return {"type": "none", "text": "", "codes": [], "first_name": "", "last_name": ""}
+
+        type_str = "none"
+        text = ""
+        codes: list[str] = []
+        first_name = ""
+        last_name = ""
+        for line in raw.split("\n"):
+            line = line.strip()
+            if line.upper().startswith("TYPE:"):
+                type_str = line[len("TYPE:"):].strip().lower()
+            elif line.upper().startswith("TEXT:"):
+                text = line[len("TEXT:"):].strip()
+            elif line.upper().startswith("CODES:"):
+                codes_raw = line[len("CODES:"):].strip()
+                if codes_raw:
+                    codes = re.findall(r"\d{7,}", codes_raw)
+            elif line.upper().startswith("FIRST_NAME:"):
+                first_name = line[len("FIRST_NAME:"):].strip()
+            elif line.upper().startswith("LAST_NAME:"):
+                last_name = line[len("LAST_NAME:"):].strip()
+
+        type_normalized = type_str if type_str in (
+            "success_popup", "print_preview", "error_popup"
+        ) else "none"
+
+        return {
+            "type": type_normalized,
+            "text": text,
+            "codes": codes,
+            "first_name": first_name,
+            "last_name": last_name,
+        }
+
+    def _select_station_with_recovery(self, combo, station_name: str, role: str):
+        """Select a station from a combo, recovering from common form blockers.
+
+        Failure modes recovered: error popup (dismiss), print preview (close).
+        Refuses to dismiss a success popup — raises ORPHAN_TICKET_DETECTED with
+        the ticket codes Gemini OCR'd so they aren't silently lost.
+
+        Args:
+            combo: pywinauto ComboBox wrapper for origin or destination.
+            station_name: PRIME station code to select.
+            role: "origin" or "destination" — used in error messages.
+        """
+        try:
+            combo.select(station_name)
+            return
+        except Exception:
+            pass
+
+        blocker = self._classify_form_blocker()
+
+        if blocker["type"] == "success_popup":
+            pax_name = " ".join(p for p in (blocker["first_name"], blocker["last_name"]) if p).strip()
+            pax_label = pax_name or "unknown passenger (name not readable)"
+            raise PrimeError(
+                TicketErrorCode.ORPHAN_TICKET_DETECTED,
+                f"Found orphan success popup from a prior booking. "
+                f"PRESERVE THESE CODES: {blocker['codes']} for passenger: {pax_label}. "
+                f"Popup text: {blocker['text']}. Manual reconciliation required — "
+                f"these codes do NOT belong to the current booking.",
+            )
+
+        if blocker["type"] == "print_preview":
+            logger.warning(
+                f"Print preview detected blocking {role} station selection — closing"
+            )
+            self._close_print_preview(Desktop(backend="uia"))
+            time.sleep(0.5)
+        elif blocker["type"] == "error_popup":
+            logger.warning(
+                f"Error popup detected blocking {role} station selection — dismissing"
+            )
+            self._dismiss_error_popup()
+            time.sleep(0.5)
+        else:
+            logger.warning(
+                f"No identifiable blocker for {role} station selection — retrying anyway"
+            )
+
+        try:
+            combo.select(station_name)
+        except Exception:
+            raise PrimeError(
+                TicketErrorCode.STATION_NOT_FOUND,
+                f"{role.capitalize()} station '{station_name}' not found in PRIME dropdown",
+            )
+
     def fill_trip_details(self, leg, trip_type: str, return_leg=None,
                          connecting_arrival: str = None, voyage_only: bool = False) -> dict:
         """Fill the Trip Details pane.
@@ -265,37 +407,12 @@ class PrimeDriver:
                 time.sleep(0.3)
 
             # 4. Select origin (combo_box[2])
-            origin_combo = combos[2]
-            try:
-                origin_combo.select(leg["origin"])
-            except Exception:
-                # A leftover popup may be blocking the dropdown — dismiss and retry
-                self._dismiss_error_popup()
-                time.sleep(0.3)
-                try:
-                    origin_combo.select(leg["origin"])
-                except Exception:
-                    raise PrimeError(
-                        TicketErrorCode.STATION_NOT_FOUND,
-                        f"Origin station '{leg['origin']}' not found in PRIME dropdown",
-                    )
+            self._select_station_with_recovery(combos[2], leg["origin"], "origin")
             time.sleep(0.3)
             self._dismiss_same_station_dialog()
 
             # 5. Select destination (combo_box[1])
-            dest_combo = combos[1]
-            try:
-                dest_combo.select(leg["destination"])
-            except Exception:
-                self._dismiss_error_popup()
-                time.sleep(0.3)
-                try:
-                    dest_combo.select(leg["destination"])
-                except Exception:
-                    raise PrimeError(
-                        TicketErrorCode.STATION_NOT_FOUND,
-                        f"Destination station '{leg['destination']}' not found in PRIME dropdown",
-                    )
+            self._select_station_with_recovery(combos[1], leg["destination"], "destination")
             time.sleep(0.3)
             self._dismiss_same_station_dialog()
 
