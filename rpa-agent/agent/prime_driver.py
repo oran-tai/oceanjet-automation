@@ -1,6 +1,7 @@
 """pywinauto driver for OceanJet PRIME desktop application."""
 
 import _ctypes
+import concurrent.futures
 import logging
 import re
 import time
@@ -42,6 +43,9 @@ class PrimeDriver:
             )
 
         self.gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        self._gemini_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="gemini"
+        )
 
     def _reconnect(self):
         """Re-connect to PRIME, picking up a potentially new process ID."""
@@ -58,20 +62,53 @@ class PrimeDriver:
                 f"PRIME window lost and reconnect failed: {e}",
             )
 
-    def _call_gemini(self, prompt: str, image_bytes: bytes, max_retries: int = 3) -> str:
-        """Call Gemini Vision with retry on transient errors (503, timeout, etc.)."""
+    def _call_gemini(
+        self,
+        prompt: str,
+        image_bytes: bytes,
+        max_retries: int = 3,
+        per_call_timeout_sec: int = 60,
+    ) -> str:
+        """Call Gemini Vision with retry on transient errors and a per-call timeout.
+
+        A bounded per-call timeout prevents stuck calls (we observed 3min39s
+        in production) from leaving us with stale screenshots when results
+        finally return. On timeout, the orphaned thread continues running
+        but we move on with a fresh attempt.
+
+        Worst-case budget: max_retries × per_call_timeout_sec + backoff sleeps.
+        Default: 3 × 60s + 2s + 4s = ~186s.
+        """
+        def _do_call():
+            response = self.gemini_client.models.generate_content(
+                model="gemini-flash-latest",
+                contents=[
+                    prompt,
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+                ],
+            )
+            return response.text.strip()
+
         for attempt in range(1, max_retries + 1):
+            future = self._gemini_executor.submit(_do_call)
             try:
-                response = self.gemini_client.models.generate_content(
-                    model="gemini-flash-latest",
-                    contents=[
-                        prompt,
-                        types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-                    ],
+                return future.result(timeout=per_call_timeout_sec)
+            except concurrent.futures.TimeoutError:
+                future.cancel()
+                logger.warning(
+                    f"Gemini call exceeded {per_call_timeout_sec}s timeout "
+                    f"(attempt {attempt}/{max_retries})"
                 )
-                return response.text.strip()
+                if attempt < max_retries:
+                    time.sleep(2 * attempt)
+                else:
+                    raise TimeoutError(
+                        f"Gemini call exceeded {per_call_timeout_sec}s after {max_retries} attempts"
+                    )
             except Exception as e:
-                logger.warning(f"Gemini API call failed (attempt {attempt}/{max_retries}): {e}")
+                logger.warning(
+                    f"Gemini API call failed (attempt {attempt}/{max_retries}): {e}"
+                )
                 if attempt < max_retries:
                     time.sleep(2 * attempt)
                 else:
@@ -122,43 +159,80 @@ class PrimeDriver:
             key += (return_leg["date"], return_leg.get("time", ""))
         return key
 
-    def _dismiss_error_popup(self):
-        """Dismiss a PRIME error/validation popup.
+    def _dismiss_error_popup(self) -> dict | None:
+        """Dismiss a PRIME error popup, refusing to dismiss success popups.
 
-        PRIME emits two families of error popups:
+        Before dismissing any small 'OCEAN FAST FERRIES' window we classify
+        it via Gemini Vision. If it's a success popup we leave it alone and
+        return the codes/pax info — pressing Enter on a success popup commits
+        the ticket and opens print preview, silently losing the codes.
+
+        PRIME emits two families of popups using the same heuristic:
         1. Top-level desktop windows (e.g. 'Contact detail is required')
         2. Child dialogs of the main window (e.g. 'No Tourist Class seats
            available.' after Confirm → Yes)
 
-        Both share the same title prefix ('OCEAN FAST FERRIES...') and an OK
-        button. We try the desktop-level search first, then fall back to a
-        child-window search on main_window.
+        Returns:
+            None if no popup was found, or popup was an error and was dismissed.
+            dict with codes/first_name/last_name/text if a SUCCESS popup was
+            found and NOT dismissed — caller must surface as ORPHAN_TICKET_DETECTED.
         """
+        # Check if any small "OCEAN FAST FERRIES" window exists at top level
+        top_candidate = None
         try:
             desktop = Desktop(backend="uia")
             for w in desktop.windows(title_re="OCEAN FAST FERRIES.*"):
-                rect = w.rectangle()
+                try:
+                    rect = w.rectangle()
+                except Exception:
+                    continue
                 if (rect.right - rect.left) < 700:
-                    w.set_focus()
-                    time.sleep(0.3)
-                    send_keys("{ENTER}")
-                    logger.info("Dismissed error popup (top-level)")
-                    time.sleep(0.3)
-                    return
+                    top_candidate = w
+                    break
         except Exception as e:
             logger.debug(f"Top-level popup search failed: {e}")
 
+        if top_candidate is not None:
+            # Classify before dismissing — refuse if it's a success popup
+            blocker = self._classify_form_blocker()
+            if blocker["type"] == "success_popup":
+                logger.error(
+                    f"Refusing to dismiss success popup. Codes: {blocker['codes']}, "
+                    f"pax: {blocker['first_name']} {blocker['last_name']}"
+                )
+                return blocker
+            try:
+                top_candidate.set_focus()
+                time.sleep(0.3)
+                send_keys("{ENTER}")
+                logger.info("Dismissed error popup (top-level)")
+                time.sleep(0.3)
+                return None
+            except Exception as e:
+                logger.debug(f"Failed to dismiss top-level candidate: {e}")
+
+        # Fallback: child dialog of main window
         try:
             dlg = self.main_window.child_window(
                 title_re=".*OCEAN FAST FERRIES.*", control_type="Window"
             )
             if dlg.exists(timeout=0.5):
+                # Classify before dismissing — refuse if it's a success popup
+                blocker = self._classify_form_blocker()
+                if blocker["type"] == "success_popup":
+                    logger.error(
+                        f"Refusing to dismiss success popup (child). "
+                        f"Codes: {blocker['codes']}, "
+                        f"pax: {blocker['first_name']} {blocker['last_name']}"
+                    )
+                    return blocker
+
                 ok_btn = dlg.child_window(title="OK", control_type="Button")
                 if ok_btn.exists(timeout=0.5):
                     ok_btn.click_input()
                     logger.info("Dismissed error popup (child dialog)")
                     time.sleep(0.3)
-                    return
+                    return None
                 dlg.set_focus()
                 time.sleep(0.3)
                 send_keys("{ENTER}")
@@ -166,6 +240,8 @@ class PrimeDriver:
                 time.sleep(0.3)
         except Exception as e:
             logger.debug(f"Child dialog popup search failed: {e}")
+
+        return None
 
     def _dismiss_same_station_dialog(self):
         """Dismiss the 'Origin and Destination must not be the same' error dialog.
@@ -288,6 +364,117 @@ class PrimeDriver:
             "last_name": last_name,
         }
 
+    def _read_post_confirm_popup(self) -> dict:
+        """OCR the post-Confirm result popup with a structured prompt.
+
+        Replaces the old `_read_dialog_via_screenshot(full_screen=True)` for
+        the Yes-on-Confirm path. The structured response gives us a reliable
+        "no popup visible" signal so we can retry instead of misinterpreting
+        the form's rates panel as popup text.
+
+        Returns dict with:
+            popup_visible: bool — Gemini saw a popup overlaying the form
+            is_success: bool — popup is "Process Complete / Ticket number(s)"
+            is_error: bool — popup is some other error message
+            text: full popup text (empty if not popup_visible)
+            codes: list[str] of ticket codes (success popup only)
+            first_name / last_name: form pax fields (success popup only)
+            raw: the raw Gemini response, for logging
+        """
+        from PIL import ImageGrab
+
+        empty = {
+            "popup_visible": False,
+            "is_success": False,
+            "is_error": False,
+            "text": "",
+            "codes": [],
+            "first_name": "",
+            "last_name": "",
+            "raw": "",
+        }
+
+        try:
+            screenshot = ImageGrab.grab()
+        except Exception as e:
+            logger.error(f"Failed to capture screenshot for post-Confirm popup: {e}")
+            return empty
+
+        prompt = (
+            "This is a screenshot of a ferry ticketing system after clicking Yes "
+            "on a Confirm dialog. A small popup window may now be overlaying the "
+            "main form. The popup is one of:\n"
+            "- SUCCESS: contains 'Process Complete. Ticket number(s): [<codes>].'\n"
+            "- ERROR: any other message (e.g. 'No Tourist Class seats available.')\n"
+            "If no popup is visible (the main form is fully visible behind), "
+            "respond with POPUP: NONE — do NOT describe the form contents.\n\n"
+            "When POPUP is SUCCESS, also read the 'First Name' and 'Last Name' "
+            "fields from the Personal Details section of the form behind the popup.\n\n"
+            "Return in this exact format and nothing else:\n"
+            "POPUP: <SUCCESS|ERROR|NONE>\n"
+            "TEXT: <full popup text if SUCCESS or ERROR, else empty>\n"
+            "CODES: <comma-separated ticket numbers from inside [] if SUCCESS, else empty>\n"
+            "FIRST_NAME: <First Name field value if SUCCESS, else empty>\n"
+            "LAST_NAME: <Last Name field value if SUCCESS, else empty>"
+        )
+
+        img_buffer = io.BytesIO()
+        screenshot.save(img_buffer, format="PNG")
+        image_bytes = img_buffer.getvalue()
+
+        try:
+            raw = self._call_gemini(prompt, image_bytes)
+            logger.info(f"Post-Confirm popup OCR: {raw}")
+        except Exception as e:
+            logger.error(f"Gemini call failed for post-Confirm popup: {e}")
+            return empty
+
+        popup_label = ""
+        text = ""
+        codes: list[str] = []
+        first_name = ""
+        last_name = ""
+        for line in raw.split("\n"):
+            line = line.strip()
+            if line.upper().startswith("POPUP:"):
+                popup_label = line[len("POPUP:"):].strip().upper()
+            elif line.upper().startswith("TEXT:"):
+                text = line[len("TEXT:"):].strip()
+            elif line.upper().startswith("CODES:"):
+                codes_raw = line[len("CODES:"):].strip()
+                if codes_raw:
+                    codes = re.findall(r"\d{7,}", codes_raw)
+            elif line.upper().startswith("FIRST_NAME:"):
+                first_name = line[len("FIRST_NAME:"):].strip()
+            elif line.upper().startswith("LAST_NAME:"):
+                last_name = line[len("LAST_NAME:"):].strip()
+
+        is_success = popup_label == "SUCCESS"
+        is_error = popup_label == "ERROR"
+        popup_visible = is_success or is_error
+
+        # Belt-and-suspenders: if Gemini misclassified, recover from text content
+        if not popup_visible and text:
+            tl = text.lower()
+            if "process complete" in tl or "ticket number" in tl:
+                is_success = True
+                popup_visible = True
+                if not codes:
+                    bracket_content = re.findall(r"\[([^\]]+)\]", text)
+                    for content in bracket_content:
+                        codes.extend(re.findall(r"\d{7,}", content))
+
+        return {
+            "popup_visible": popup_visible,
+            "is_success": is_success,
+            "is_error": is_error,
+            "text": text,
+            "codes": codes,
+            "first_name": first_name,
+            "last_name": last_name,
+            "raw": raw,
+        }
+
     def _select_station_with_recovery(self, combo, station_name: str, role: str):
         """Select a station from a combo, recovering from common form blockers.
 
@@ -329,7 +516,19 @@ class PrimeDriver:
             logger.warning(
                 f"Error popup detected blocking {role} station selection — dismissing"
             )
-            self._dismiss_error_popup()
+            orphan = self._dismiss_error_popup()
+            if orphan is not None:
+                # Race: classifier said error, dismiss-time check said success
+                pax_name = " ".join(
+                    p for p in (orphan["first_name"], orphan["last_name"]) if p
+                ).strip()
+                pax_label = pax_name or "unknown passenger (name not readable)"
+                raise PrimeError(
+                    TicketErrorCode.ORPHAN_TICKET_DETECTED,
+                    f"Found orphan success popup during station-select recovery. "
+                    f"PRESERVE THESE CODES: {orphan['codes']} for passenger: {pax_label}. "
+                    f"Popup text: {orphan['text']}.",
+                )
             time.sleep(0.5)
         else:
             logger.warning(
@@ -1103,24 +1302,36 @@ class PrimeDriver:
             # it due to UIA flake), or classifies the error popup and raises.
             result_dlg = self._check_error_after_confirm()
 
-        # Wait for the dialog to fully render
-        time.sleep(1)
+        # OCR the popup. Retry if first attempt sees no popup — popup may
+        # still be rendering, briefly covered by print preview, etc. Each
+        # retry takes a fresh screenshot.
+        parsed = None
+        for attempt in range(1, 4):
+            time.sleep(1)
+            parsed = self._read_post_confirm_popup()
+            if parsed["popup_visible"]:
+                break
+            logger.warning(
+                f"Post-Confirm OCR found no popup (attempt {attempt}/3) — "
+                f"sleeping 2s and retrying"
+            )
+            time.sleep(2)
 
-        # Screenshot the dialog and send to Gemini to read the text
-        # (Delphi paints the message directly — not accessible via UIA).
-        # Use full_screen=True: PRIME's UI thread may still be busy from
-        # the commit, so a UIA-dependent bbox screenshot can fail.
-        dialog_text = self._read_dialog_via_screenshot(result_dlg, full_screen=True)
-        logger.info(f"Result dialog text: {dialog_text}")
+        if not parsed["popup_visible"]:
+            # Never click OK on the popup when we can't read it — clicking OK
+            # commits the ticket and opens print preview, losing codes silently.
+            # Leave the popup on screen for the cleanup block (which now
+            # refuses to dismiss success popups) to handle safely.
+            raise PrimeError(
+                TicketErrorCode.RPA_INTERNAL_ERROR,
+                f"Result popup window detected by scan but OCR could not read "
+                f"it after 3 retries. Popup may still be rendering or covered. "
+                f"Last raw OCR: {parsed['raw']}",
+            )
 
-        if "Process Complete" in dialog_text or "Ticket number" in dialog_text:
-            # Extract ticket numbers from inside brackets only: [12345678] or [13063463,13063464]
-            # This avoids matching the build number in "Build 20231109E"
-            bracket_content = re.findall(r"\[([^\]]+)\]", dialog_text)
-            ticket_numbers = []
-            for content in bracket_content:
-                ticket_numbers.extend(re.findall(r"\d{7,}", content))
-            logger.info(f"Ticket number(s) captured: {ticket_numbers}")
+        if parsed["is_success"]:
+            codes = parsed["codes"]
+            logger.info(f"Ticket number(s) captured: {codes}")
 
             # Click OK to close the success dialog
             try:
@@ -1130,87 +1341,66 @@ class PrimeDriver:
                 send_keys("{ENTER}")
             time.sleep(1)
 
-            # Close the print preview that opens after ticket issuance
             self._close_print_preview(desktop)
 
-            if not ticket_numbers:
+            if not codes:
                 raise PrimeError(
                     TicketErrorCode.RPA_INTERNAL_ERROR,
-                    f"CRITICAL: Ticket was issued but number could not be captured from: {dialog_text}",
+                    f"CRITICAL: Ticket was issued but number could not be "
+                    f"captured from: {parsed['text']}",
                 )
 
-            return ticket_numbers
-        else:
-            # CRITICAL: We already clicked Yes on the Confirm dialog,
-            # so a ticket was likely issued. If we can't read the success
-            # message, we must treat this as a system error — retrying
-            # would issue a duplicate ticket.
-            logger.error(
-                f"CRITICAL: Ticket may have been issued but could not read "
-                f"success dialog. Text found: {dialog_text}"
-            )
+            return codes
 
-            # Close the dialog
-            try:
-                ok_btn = result_dlg.child_window(title="OK", control_type="Button")
-                ok_btn.click_input()
-            except Exception:
-                send_keys("{ENTER}")
-            time.sleep(1)
+        # is_error: ticket was NOT issued — popup is an error message
+        text = parsed["text"]
+        text_lower = text.lower()
 
-            # Close print preview if it appeared
-            self._close_print_preview(desktop)
+        # Click OK to close the error popup
+        try:
+            ok_btn = result_dlg.child_window(title="OK", control_type="Button")
+            ok_btn.click_input()
+        except Exception:
+            send_keys("{ENTER}")
+        time.sleep(0.5)
 
-            raise PrimeError(
-                TicketErrorCode.RPA_INTERNAL_ERROR,
-                f"CRITICAL: Ticket likely issued but number not captured. "
-                f"Dialog text: {dialog_text}. Manual intervention required.",
-            )
+        is_sold_out = (
+            "sold out" in text_lower
+            or "no available" in text_lower
+            or "no seat" in text_lower
+            or "seats available" in text_lower
+        )
+        if is_sold_out:
+            raise PrimeError(TicketErrorCode.TRIP_SOLD_OUT, text)
 
-    def _read_dialog_via_screenshot(self, dialog, full_screen: bool = False) -> str:
-        """Read text from a PRIME dialog by screenshotting it and sending to Gemini.
+        raise PrimeError(TicketErrorCode.PRIME_VALIDATION_ERROR, text)
+
+    def _read_dialog_via_screenshot(self, dialog) -> str:
+        """Read text from a PRIME dialog via bbox screenshot + Gemini Vision.
 
         Delphi dialogs paint their message text directly on the window surface
-        rather than using accessible label controls, so we need OCR via Gemini.
-
-        Args:
-            dialog: pywinauto dialog handle. Used for the bbox screenshot
-                and as a window_text() fallback in non-full-screen mode.
-            full_screen: when True, capture full screen with no UIA calls.
-                Used in the post-Confirm path where PRIME's UI thread may
-                still be locked from the ticket commit, making set_focus()
-                and rectangle() throw.
+        rather than using accessible label controls, so we need OCR. Used for
+        the pre-Confirm error dialog path. The post-Confirm result-popup path
+        uses _read_post_confirm_popup() instead.
         """
         from PIL import ImageGrab
 
-        if full_screen:
-            try:
-                screenshot = ImageGrab.grab()
-            except Exception as e:
-                logger.error(f"Failed to capture full-screen screenshot: {e}")
-                return ""
-            prompt = (
-                "This is a screenshot of a ferry ticketing system. "
-                "Find the small popup/dialog overlaying the main form and read "
-                "ALL the text shown in that popup exactly as written. "
-                "Return ONLY the popup text content, nothing else."
-            )
-        else:
-            try:
-                dialog.set_focus()
-                time.sleep(0.3)
-                rect = dialog.rectangle()
-                screenshot = ImageGrab.grab(bbox=(
-                    rect.left, rect.top, rect.right, rect.bottom
-                ))
-            except Exception as e:
-                logger.error(f"Failed to capture dialog screenshot: {e}")
-                return dialog.window_text()
-            prompt = (
-                "This is a screenshot of a dialog box from a ferry ticketing system. "
-                "Read ALL the text shown in the dialog and return it exactly as written. "
-                "Include the full message text. Return ONLY the text content, nothing else."
-            )
+        try:
+            dialog.set_focus()
+            time.sleep(0.3)
+            rect = dialog.rectangle()
+            screenshot = ImageGrab.grab(bbox=(
+                rect.left, rect.top, rect.right, rect.bottom
+            ))
+        except Exception as e:
+            logger.error(f"Failed to capture dialog screenshot: {e}")
+            return dialog.window_text()
+
+        prompt = (
+            "This is a screenshot of a dialog box from a ferry ticketing system. "
+            "Read ALL the text shown in the dialog and return it exactly as written. "
+            "Include the full message text. Return ONLY the text content, nothing else."
+        )
 
         img_buffer = io.BytesIO()
         screenshot.save(img_buffer, format="PNG")
@@ -1223,8 +1413,6 @@ class PrimeDriver:
         except Exception as e:
             logger.error(f"Gemini Vision API call failed for dialog: {e}")
 
-        if full_screen:
-            return ""
         return dialog.window_text()
 
     def _close_print_preview(self, desktop):
@@ -1493,13 +1681,64 @@ class PrimeDriver:
                 if e.error_code in SYSTEM_ERROR_CODES:
                     logger.error("System-level error, stopping booking")
 
-                # Clean up any leftover popups so the next booking starts clean
+                # If the error is already ORPHAN_TICKET_DETECTED, codes are
+                # already preserved in the alert (caught upstream). Dismiss
+                # the popup directly so the next booking starts clean.
+                if e.error_code == TicketErrorCode.ORPHAN_TICKET_DETECTED:
+                    try:
+                        send_keys("{ENTER}")
+                        time.sleep(1)
+                        self._close_print_preview(Desktop(backend="uia"))
+                        self.click_refresh()
+                    except Exception as cleanup_e:
+                        logger.warning(
+                            f"Best-effort orphan cleanup failed: {cleanup_e}"
+                        )
+                    break
+
+                # Standard cleanup. If we discover a success popup here, the
+                # original error timed out / misread — preserve the codes by
+                # upgrading this passenger's error to ORPHAN_TICKET_DETECTED
+                # instead of silently dismissing the popup.
+                orphan = None
                 try:
-                    self._dismiss_error_popup()
-                    self.click_refresh()
-                    self._dismiss_error_popup()
+                    orphan = self._dismiss_error_popup()
+                    if orphan is None:
+                        self.click_refresh()
+                        orphan = self._dismiss_error_popup()
                 except Exception:
                     pass
+
+                if orphan is not None:
+                    pax_name = " ".join(
+                        p for p in (orphan["first_name"], orphan["last_name"]) if p
+                    ).strip()
+                    pax_label = pax_name or "unknown passenger (name not readable)"
+                    orphan_msg = (
+                        f"Cleanup found orphan success popup. "
+                        f"PRESERVE THESE CODES: {orphan['codes']} for passenger: "
+                        f"{pax_label}. Popup text: {orphan['text']}. "
+                        f"Original error: [{e.error_code.value}] {e.message}"
+                    )
+                    logger.error(f"ORPHAN: {orphan_msg}")
+                    last_error_code = TicketErrorCode.ORPHAN_TICKET_DETECTED
+                    last_error_msg = orphan_msg
+                    pax_results[pax_idx]["errorCode"] = TicketErrorCode.ORPHAN_TICKET_DETECTED.value
+                    pax_results[pax_idx]["error"] = orphan_msg
+
+                    # Codes are now preserved in the alert. Clicking OK on the
+                    # popup is safe (PRIME will open print preview, which we
+                    # close) and necessary so the next booking starts clean —
+                    # otherwise the leftover popup re-triggers orphan-detection
+                    # in the next booking and double-alerts the same codes.
+                    try:
+                        send_keys("{ENTER}")
+                        time.sleep(1)
+                        self._close_print_preview(Desktop(backend="uia"))
+                    except Exception as cleanup_e:
+                        logger.warning(
+                            f"Best-effort post-orphan cleanup failed: {cleanup_e}"
+                        )
                 break
 
         # Clear per-booking state
