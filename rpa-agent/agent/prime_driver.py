@@ -311,14 +311,14 @@ class PrimeDriver:
             "3. ERROR_POPUP — any other small dialog (error message, validation, "
             "confirmation)\n"
             "4. NONE — the main form is fully accessible, no dialogs or previews on top\n\n"
-            "If TYPE is SUCCESS_POPUP, ALSO read the 'First Name' and 'Last Name' "
-            "fields from the Personal Details section of the form behind the popup.\n\n"
+            "ALWAYS read the 'First Name' and 'Last Name' fields from the Personal "
+            "Details section of the form (visible regardless of whether a popup is on top).\n\n"
             "Return in this exact format:\n"
             "TYPE: <SUCCESS_POPUP|PRINT_PREVIEW|ERROR_POPUP|NONE>\n"
             "TEXT: <popup text if present, or empty>\n"
             "CODES: <comma-separated ticket numbers if SUCCESS_POPUP, else empty>\n"
-            "FIRST_NAME: <First Name field value if SUCCESS_POPUP, else empty>\n"
-            "LAST_NAME: <Last Name field value if SUCCESS_POPUP, else empty>"
+            "FIRST_NAME: <First Name field value if visible, else empty>\n"
+            "LAST_NAME: <Last Name field value if visible, else empty>"
         )
 
         img_buffer = io.BytesIO()
@@ -408,14 +408,14 @@ class PrimeDriver:
             "- ERROR: any other message (e.g. 'No Tourist Class seats available.')\n"
             "If no popup is visible (the main form is fully visible behind), "
             "respond with POPUP: NONE — do NOT describe the form contents.\n\n"
-            "When POPUP is SUCCESS, also read the 'First Name' and 'Last Name' "
-            "fields from the Personal Details section of the form behind the popup.\n\n"
+            "ALWAYS read the 'First Name' and 'Last Name' fields from the Personal "
+            "Details section of the form (visible regardless of whether a popup is on top).\n\n"
             "Return in this exact format and nothing else:\n"
             "POPUP: <SUCCESS|ERROR|NONE>\n"
             "TEXT: <full popup text if SUCCESS or ERROR, else empty>\n"
             "CODES: <comma-separated ticket numbers from inside [] if SUCCESS, else empty>\n"
-            "FIRST_NAME: <First Name field value if SUCCESS, else empty>\n"
-            "LAST_NAME: <Last Name field value if SUCCESS, else empty>"
+            "FIRST_NAME: <First Name field value if visible, else empty>\n"
+            "LAST_NAME: <Last Name field value if visible, else empty>"
         )
 
         img_buffer = io.BytesIO()
@@ -1327,21 +1327,43 @@ class PrimeDriver:
         # OCR the popup. Retry if first attempt sees no popup — UIA may have
         # found the popup window before PRIME finished rendering its pixels
         # (observed: 30s+ gap between window-create and text-paint under load).
-        # 5 attempts × 30s sleeps = ~2.5min budget — enough for the delays
+        # 6 attempts × 30s sleeps = ~3min budget — enough for the delays
         # we've observed, still bounded.
         parsed = None
-        for attempt in range(1, 6):
+        max_attempts = 6
+        for attempt in range(1, max_attempts + 1):
             time.sleep(1)
             parsed = self._read_post_confirm_popup()
             if parsed["popup_visible"]:
                 break
-            logger.warning(
-                f"Post-Confirm OCR found no popup (attempt {attempt}/5) — "
-                f"sleeping 30s and retrying"
-            )
-            time.sleep(30)
+            if attempt < max_attempts:
+                logger.warning(
+                    f"Post-Confirm OCR found no popup (attempt {attempt}/{max_attempts}) — "
+                    f"sleeping 30s and retrying"
+                )
+                time.sleep(30)
+            else:
+                logger.warning(
+                    f"Post-Confirm OCR found no popup (attempt {attempt}/{max_attempts}) — "
+                    f"giving up"
+                )
 
         if not parsed["popup_visible"]:
+            # Capture one final screenshot at the exact moment of failure for
+            # diagnosis — the screen state here is what cleanup will see next.
+            try:
+                from PIL import ImageGrab
+                from datetime import datetime
+                from pathlib import Path
+                debug_dir = Path("debug")
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                final_path = debug_dir / f"post_confirm_at_raise_{ts}.png"
+                ImageGrab.grab().save(final_path, format="PNG")
+                logger.info(f"Saved final debug screenshot at moment of raise: {final_path}")
+            except Exception as save_e:
+                logger.debug(f"Failed to save final debug screenshot: {save_e}")
+
             # Never click OK on the popup when we can't read it — clicking OK
             # commits the ticket and opens print preview, losing codes silently.
             # Leave the popup on screen for the cleanup block (which now
@@ -1349,8 +1371,8 @@ class PrimeDriver:
             raise PrimeError(
                 TicketErrorCode.RPA_INTERNAL_ERROR,
                 f"Result popup window detected by scan but OCR could not read "
-                f"it after 3 retries. Popup may still be rendering or covered. "
-                f"Last raw OCR: {parsed['raw']}",
+                f"it after {max_attempts} retries. Popup may still be rendering "
+                f"or covered. Last raw OCR: {parsed['raw']}",
             )
 
         if parsed["is_success"]:
