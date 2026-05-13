@@ -20,11 +20,51 @@ Usage:
     create_presentation(slides_data, "output.pptx")
 """
 import json
+import math
 import sys
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
+
+# Rough text-height estimation for proportional body fonts (Raleway-like).
+# Tuned conservatively so we under-report chars-per-line and over-report height,
+# preventing visual overflow.
+_CHARS_PER_INCH_BY_PT = {14: 9.5, 15: 8.8, 18: 7.4, 24: 5.5, 28: 4.7}
+_LINE_HEIGHT_BY_PT = {14: 0.22, 15: 0.24, 18: 0.30, 24: 0.40, 28: 0.46}
+_PADDING_BETWEEN = 0.2  # inches between content blocks
+
+
+def estimate_text_height(text, font_size_pt, width_inches=11.933):
+    """Estimate rendered text height in inches for a given string + font size."""
+    if not text:
+        return 0.0
+    cpi = _CHARS_PER_INCH_BY_PT.get(font_size_pt, 7.4)
+    lh = _LINE_HEIGHT_BY_PT.get(font_size_pt, 0.30)
+    chars_per_line = max(1.0, width_inches * cpi)
+    # Account for explicit line breaks within text
+    n_lines = 0
+    for line in text.split("\n"):
+        n_lines += max(1, math.ceil(len(line) / chars_per_line))
+    return n_lines * lh
+
+
+def check_overflow(slide, slide_no, slide_height_inches=7.5):
+    """Inspect a slide post-build and warn about anything that runs off the bottom."""
+    warnings = []
+    for sh in slide.shapes:
+        if not sh.has_text_frame:
+            continue
+        top_in = sh.top / 914400
+        h_in = sh.height / 914400
+        bottom = top_in + h_in
+        text = sh.text_frame.text.strip().split("\n")[0][:60]
+        if bottom > slide_height_inches + 0.02:
+            warnings.append(
+                f"  ⚠ slide {slide_no}: shape bottom={bottom:.2f}\" exceeds {slide_height_inches}\" "
+                f"(text: {text!r})"
+            )
+    return warnings
 
 # Brand constants
 DARK = RGBColor(0x32, 0x37, 0x3C)
@@ -102,16 +142,34 @@ def add_content_slide(prs, data):
     add_accent_line(slide, LEFT_MARGIN, Inches(1.2), Inches(1.5))
 
     current_top = CONTENT_TOP
+    current_top_inches = 1.8
 
-    # Callout (big number / key metric)
+    # Callout (big number / key metric) — dynamically sized
     if data.get("callout"):
-        add_textbox(slide, LEFT_MARGIN, current_top, CONTENT_WIDTH, Inches(0.6),
+        callout_h_in = max(0.5, estimate_text_height(data["callout"], 24))
+        add_textbox(slide, LEFT_MARGIN, current_top, CONTENT_WIDTH, Inches(callout_h_in),
                     data["callout"], BODY_FONT, 24, ACCENT, bold=True)
-        current_top = Inches(2.5)
+        current_top_inches += callout_h_in + _PADDING_BETWEEN
+        current_top = Inches(current_top_inches)
 
-    # Bullets (with sub-bullet support)
+    # Bullets (with sub-bullet support) — dynamically sized
     if data.get("bullets"):
-        txBox = slide.shapes.add_textbox(LEFT_MARGIN, current_top, CONTENT_WIDTH, Inches(4.0))
+        # Pre-estimate total bullet height so the box fits the content
+        est_h = 0.0
+        for b in data["bullets"]:
+            if isinstance(b, dict):
+                main_text = b["text"]
+                sub_bullets = b.get("sub_bullets", [])
+            else:
+                main_text = b
+                sub_bullets = []
+            est_h += estimate_text_height(f"•  {main_text}", 18) + 0.10
+            for sb in sub_bullets:
+                est_h += estimate_text_height(f"      –  {sb}", 15) + 0.05
+        # Cap so the box never extends past slide bottom
+        max_h = max(0.5, 7.5 - current_top_inches - 0.1)
+        box_h = min(est_h + 0.2, max_h)
+        txBox = slide.shapes.add_textbox(LEFT_MARGIN, current_top, CONTENT_WIDTH, Inches(box_h))
         tf = txBox.text_frame
         tf.word_wrap = True
         first = True
@@ -143,20 +201,34 @@ def add_content_slide(prs, data):
                 p2.font.size = Pt(15)
                 p2.font.color.rgb = DARK
 
-        # Track vertical position
-        total_lines = 0
+        # Track vertical position — sum estimated heights for each bullet (with wrapping)
+        bullets_h_in = 0.0
         for bullet in data["bullets"]:
-            total_lines += 1
             if isinstance(bullet, dict):
-                total_lines += len(bullet.get("sub_bullets", []))
-        current_top = Inches(current_top / 914400 + 0.35 * total_lines + 0.3)
+                main_text = bullet["text"]
+                sub_bullets = bullet.get("sub_bullets", [])
+            else:
+                main_text = bullet
+                sub_bullets = []
+            bullets_h_in += estimate_text_height(f"•  {main_text}", 18)
+            bullets_h_in += 0.10  # space_before approximation
+            for sb in sub_bullets:
+                bullets_h_in += estimate_text_height(f"      –  {sb}", 15)
+                bullets_h_in += 0.05
+        current_top_inches += bullets_h_in + _PADDING_BETWEEN
+        current_top = Inches(current_top_inches)
 
     # Quotes
     if data.get("quotes"):
         quote_top = current_top
-        add_accent_line_vertical(slide, Inches(0.9), quote_top, Inches(0.35 * len(data["quotes"])))
+        quotes_h_in = 0.0
+        for q in data["quotes"]:
+            quotes_h_in += estimate_text_height(q, 15)
+            quotes_h_in += 0.10
+        add_accent_line_vertical(slide, Inches(0.9), quote_top, Inches(max(0.35, quotes_h_in)))
 
-        txBox = slide.shapes.add_textbox(Inches(1.1), quote_top, Inches(10.5), Inches(2.0))
+        txBox = slide.shapes.add_textbox(Inches(1.1), quote_top, Inches(10.5),
+                                         Inches(max(0.5, quotes_h_in)))
         tf = txBox.text_frame
         tf.word_wrap = True
         first = True
@@ -173,7 +245,8 @@ def add_content_slide(prs, data):
             p.font.color.rgb = QUOTE_GRAY
             p.font.italic = True
 
-        current_top = Inches(quote_top / 914400 + 0.35 * len(data["quotes"]) + 0.3)
+        current_top_inches += quotes_h_in + _PADDING_BETWEEN
+        current_top = Inches(current_top_inches)
 
     # Table
     if data.get("table"):
@@ -183,19 +256,8 @@ def add_content_slide(prs, data):
         n_rows = len(rows) + 1
         n_cols = len(headers)
 
-        # Determine table top based on what came before
-        if data.get("bullets") or data.get("callout") or data.get("quotes"):
-            bullet_count = 0
-            if data.get("bullets"):
-                for b in data["bullets"]:
-                    bullet_count += 1
-                    if isinstance(b, dict):
-                        bullet_count += len(b.get("sub_bullets", []))
-            callout_offset = 0.7 if data.get("callout") else 0
-            quote_offset = 0.35 * len(data.get("quotes", [])) + 0.3 if data.get("quotes") else 0
-            table_top = Inches(1.8 + callout_offset + 0.35 * bullet_count + 0.3 + quote_offset)
-        else:
-            table_top = CONTENT_TOP
+        # Tables sit below whatever came before (bullets/quotes/callout)
+        table_top = current_top if (data.get("bullets") or data.get("callout") or data.get("quotes")) else CONTENT_TOP
 
         # Clamp to prevent going off slide
         max_top = Inches(7.5 - 0.4 * n_rows - 0.3)
@@ -251,7 +313,17 @@ def create_presentation(slides_data, output_path):
             add_content_slide(prs, slide_data)
 
     prs.save(output_path)
-    print(f"Created {len(prs.slides)} slides \u2192 {output_path}")
+
+    # Post-build overflow check
+    all_warnings = []
+    for i, slide in enumerate(prs.slides, 1):
+        all_warnings.extend(check_overflow(slide, i))
+    if all_warnings:
+        print(f"Created {len(prs.slides)} slides \u2192 {output_path}  (with {len(all_warnings)} overflow warnings)")
+        for w in all_warnings:
+            print(w)
+    else:
+        print(f"Created {len(prs.slides)} slides \u2192 {output_path}  (no overflow detected)")
 
 
 # CLI: accept JSON file as argument
