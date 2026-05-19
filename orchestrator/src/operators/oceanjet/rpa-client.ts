@@ -14,7 +14,7 @@ export class OceanJetRpaOperator implements OperatorModule {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.rpa.authToken}`,
     },
-    timeout: 900_000, // 15 minute timeout — connecting multi-pax bookings need several Gemini calls
+    timeout: 3_600_000, // 60 minute timeout — large connecting multi-pax bookings need many Gemini calls
   });
 
   async issueTickets(booking: TranslatedBooking): Promise<TicketResult> {
