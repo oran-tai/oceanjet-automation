@@ -5,6 +5,8 @@ from agent.date_utils import (
     bookaway_date_to_prime,
     match_departure_time,
     find_connecting_departure,
+    normalize_prime_date_field,
+    grid_datetime_to_mmddyy,
 )
 
 
@@ -82,6 +84,58 @@ class TestMatchDepartureTime:
     def test_time_only_grid_format(self):
         grid = ["7:30:00 AM", "1:00:00 PM"]
         assert match_departure_time("1:00 PM", grid) == 1
+
+
+class TestNormalizePrimeDateField:
+    def test_strips_slashes(self):
+        assert normalize_prime_date_field("06/25/26") == "062526"
+
+    def test_handles_empty(self):
+        assert normalize_prime_date_field("") == ""
+        assert normalize_prime_date_field(None) == ""
+
+    def test_strips_padding_and_text(self):
+        assert normalize_prime_date_field("  06/25/26  ") == "062526"
+
+
+class TestGridDatetimeToMmddyy:
+    def test_full_datetime(self):
+        assert grid_datetime_to_mmddyy("6/25/2026 1:00:00 PM") == "062526"
+
+    def test_two_digit_year(self):
+        assert grid_datetime_to_mmddyy("6/25/26 1:00:00 PM") == "062526"
+
+    def test_unparseable_returns_none(self):
+        # Never false-positive a guard on an unexpected OCR format
+        assert grid_datetime_to_mmddyy("garbage") is None
+        assert grid_datetime_to_mmddyy("") is None
+
+
+class TestStaleDateRegression:
+    """Regression for BW5276308: a prior 13-Jul booking left PRIME's date field
+    on 07/13, this 25-Jun booking's date write didn't land, and time-only
+    matching booked the wrong day. The voyage-date guard must catch it."""
+
+    def test_time_matches_but_date_is_wrong(self):
+        requested_date = "Thu, Jun 25th 2026"
+        # Grid is filtered to the STALE date (13 Jul) still in PRIME's field
+        stale_grid = [
+            "7/13/2026 8:00:00 AM",
+            "7/13/2026 1:00:00 PM",  # same 1 PM time as the real booking
+        ]
+        # Time-only matching is happy — this is the latent bug
+        assert match_departure_time("1:00 PM", stale_grid) == 1
+        # But the selected row's date does NOT equal the requested date
+        want = bookaway_date_to_prime(requested_date)        # "062526"
+        got = grid_datetime_to_mmddyy(stale_grid[1])         # "071326"
+        assert got is not None and got != want               # guard fires
+
+    def test_correct_date_passes_guard(self):
+        requested_date = "Thu, Jun 25th 2026"
+        good_grid = ["6/25/2026 1:00:00 PM"]
+        want = bookaway_date_to_prime(requested_date)
+        got = grid_datetime_to_mmddyy(good_grid[0])
+        assert got == want                                   # guard stays silent
 
 
 class TestFindConnectingDeparture:

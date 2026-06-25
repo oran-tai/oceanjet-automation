@@ -17,7 +17,12 @@ from pywinauto.keyboard import send_keys
 import random
 
 from agent.config import PRIME_WINDOW_TITLE, PRIME_TIMEOUT_SEC, GEMINI_API_KEY, PASSENGER_DELAY_MIN_S, PASSENGER_DELAY_MAX_S
-from agent.date_utils import bookaway_date_to_prime, match_departure_time
+from agent.date_utils import (
+    bookaway_date_to_prime,
+    match_departure_time,
+    normalize_prime_date_field,
+    grid_datetime_to_mmddyy,
+)
 from agent.error_codes import TicketErrorCode, PrimeError, SYSTEM_ERROR_CODES
 
 logger = logging.getLogger("rpa-agent")
@@ -277,6 +282,62 @@ class PrimeDriver:
                 TicketErrorCode.RPA_INTERNAL_ERROR,
                 f"Failed to click Refresh: {e}",
             )
+
+    def _read_date_field(self, edit) -> str:
+        """Best-effort read of a PRIME masked date field's current value.
+
+        Delphi masked edits don't expose text consistently — try ValuePattern,
+        then legacy Value, then window text. Returns '' if all fail.
+        """
+        for getter in (
+            lambda: edit.get_value(),
+            lambda: (edit.legacy_properties() or {}).get("Value"),
+            lambda: edit.window_text(),
+        ):
+            try:
+                value = getter()
+                if value:
+                    return value
+            except Exception:
+                continue
+        return ""
+
+    def _type_date_field(self, edit, prime_date: str, label: str):
+        """Type a MMDDYY date into a PRIME masked-edit field and verify it took.
+
+        The masked-edit write is fire-and-forget and can silently drop keystrokes,
+        leaving a STALE value from the previous booking (observed in production:
+        BW5276308 inherited a prior 13-Jul booking's date because its own date
+        write didn't land, and time-only voyage matching booked the wrong day).
+        Read the field back and retry; if it positively reads a WRONG value,
+        raise rather than issue a wrong-date ticket.
+        """
+        for attempt in range(3):
+            edit.click_input()
+            send_keys("{HOME}")
+            send_keys(prime_date, with_spaces=True)
+            time.sleep(0.3)
+            actual = normalize_prime_date_field(self._read_date_field(edit))
+            if actual == prime_date:
+                return
+            logger.warning(
+                f"{label} date field shows {actual or '<unreadable>'!r}, "
+                f"expected {prime_date!r} (attempt {attempt + 1}/3) — retrying"
+            )
+
+        final = normalize_prime_date_field(self._read_date_field(edit))
+        if final and final != prime_date:
+            raise PrimeError(
+                TicketErrorCode.PRIME_VALIDATION_ERROR,
+                f"{label} date did not take: field shows {final}, expected "
+                f"{prime_date}. Refusing to book the wrong date.",
+            )
+        # Field unreadable — don't block on a read failure; the voyage-date
+        # guard in select_voyage is the backstop against a wrong-date grid.
+        logger.warning(
+            f"{label} date field could not be verified (read empty); "
+            f"relying on voyage-date guard"
+        )
 
     def _classify_form_blocker(self) -> dict:
         """Screenshot the screen and ask Gemini what (if anything) is blocking the main form.
@@ -603,25 +664,17 @@ class PrimeDriver:
             edits = trip_details.children(control_type="Edit")
             combos = trip_details.children(control_type="ComboBox")
 
-            # 2. Fill departure date (edit[1] in tree order)
+            # 2. Fill departure date (edit[1] in tree order), verified
             prime_date = bookaway_date_to_prime(leg["date"])
-            departure_date_edit = edits[1]
-            departure_date_edit.click_input()
-            send_keys("{HOME}")
-            send_keys(prime_date, with_spaces=True)
-            time.sleep(0.3)
+            self._type_date_field(edits[1], prime_date, "Departure")
 
-            # 3. Fill return date if round-trip (edit[0])
+            # 3. Fill return date if round-trip (edit[0]), verified
             if trip_type == "Round Trip" and return_leg:
                 logger.info(
                     f"Filling return date: {return_leg['date']}"
                 )
                 return_date = bookaway_date_to_prime(return_leg["date"])
-                return_date_edit = edits[0]
-                return_date_edit.click_input()
-                send_keys("{HOME}")
-                send_keys(return_date, with_spaces=True)
-                time.sleep(0.3)
+                self._type_date_field(edits[0], return_date, "Return")
 
             # 4. Select origin (combo_box[2])
             self._select_station_with_recovery(combos[2], leg["origin"], "origin")
@@ -642,7 +695,7 @@ class PrimeDriver:
         dep_cache_key = f"{leg['origin']}|{leg['destination']}|{leg['date']}"
         voyage_result = self.select_voyage(
             leg["time"], connecting_arrival=connecting_arrival,
-            cache_key=dep_cache_key,
+            cache_key=dep_cache_key, expected_date=leg["date"],
         )
         logger.info(f"Selected departure voyage: {voyage_result['voyage_number']}")
         time.sleep(0.5)
@@ -670,6 +723,7 @@ class PrimeDriver:
             ret_cache_key = f"{return_leg['origin']}|{return_leg['destination']}|{return_leg['date']}"
             return_voyage_result = self.select_voyage(
                 return_leg["time"], cache_key=ret_cache_key,
+                expected_date=return_leg["date"],
             )
             logger.info(f"Selected return voyage: {return_voyage_result['voyage_number']}")
             time.sleep(0.5)
@@ -770,7 +824,7 @@ class PrimeDriver:
         return grid_rows
 
     def select_voyage(self, target_time: str, connecting_arrival: str = None,
-                      cache_key: str = None) -> dict:
+                      cache_key: str = None, expected_date: str = None) -> dict:
         """Select a voyage from the Voyage Schedule dialog using Gemini Vision.
 
         Args:
@@ -844,6 +898,23 @@ class PrimeDriver:
                     TicketErrorCode.VOYAGE_TIME_MISMATCH,
                     f"No voyage matches departure time {target_time}. "
                     f"Available times: {grid_times}",
+                )
+
+        # Date guard: the grid is filtered by the date typed into PRIME's date
+        # field. If a stale/dropped date left PRIME on the wrong day (observed:
+        # BW5276308 inherited a prior booking's 13-Jul date), the grid shows the
+        # wrong date and time-only matching would silently book it. Verify the
+        # selected row's DATE equals the requested departure before committing.
+        if expected_date:
+            want = bookaway_date_to_prime(expected_date)
+            got = grid_datetime_to_mmddyy(grid_times[target_row])
+            if got is not None and got != want:
+                self._close_voyage_dialog(voyage_dlg)
+                raise PrimeError(
+                    TicketErrorCode.VOYAGE_TIME_MISMATCH,
+                    f"Selected voyage date {grid_times[target_row]!r} does not "
+                    f"match requested departure {expected_date!r} (PRIME date "
+                    f"field likely stale). Refusing to book the wrong date.",
                 )
 
         # Navigate to the target row using arrow keys

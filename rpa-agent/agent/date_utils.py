@@ -4,6 +4,15 @@ import re
 from datetime import datetime
 
 
+def parse_bookaway_date(date_str: str) -> datetime:
+    """Parse a Bookaway date string (e.g. 'Fri, Apr 18th 2025') to a datetime."""
+    # Remove weekday prefix: "Fri, Apr 18th 2025" -> "Apr 18th 2025"
+    cleaned = re.sub(r"^[A-Za-z]+,\s*", "", date_str.strip())
+    # Remove ordinal suffix: "Apr 18th 2025" -> "Apr 18 2025"
+    cleaned = re.sub(r"(\d+)(st|nd|rd|th)\b", r"\1", cleaned)
+    return datetime.strptime(cleaned.strip(), "%b %d %Y")
+
+
 def bookaway_date_to_prime(date_str: str) -> str:
     """Convert Bookaway date to PRIME masked edit digit string.
 
@@ -14,14 +23,33 @@ def bookaway_date_to_prime(date_str: str) -> str:
     The mask auto-inserts slashes — we only type the digits.
     Format: MMDDYY (zero-padded month and day, 2-digit year).
     """
-    # Remove weekday prefix: "Fri, Apr 18th 2025" -> "Apr 18th 2025"
-    cleaned = re.sub(r"^[A-Za-z]+,\s*", "", date_str.strip())
-    # Remove ordinal suffix: "Apr 18th 2025" -> "Apr 18 2025"
-    cleaned = re.sub(r"(\d+)(st|nd|rd|th)\b", r"\1", cleaned)
-    # Parse the date
-    dt = datetime.strptime(cleaned.strip(), "%b %d %Y")
     # Format as MMDDYY digits only (mask inserts the slashes)
-    return dt.strftime("%m%d%y")
+    return parse_bookaway_date(date_str).strftime("%m%d%y")
+
+
+def normalize_prime_date_field(value: str) -> str:
+    """Strip a PRIME masked date field display ('06/25/26') to MMDDYY digits.
+
+    Used to read back what actually landed in the date field after typing.
+    """
+    return re.sub(r"\D", "", value or "")
+
+
+def grid_datetime_to_mmddyy(grid_datetime: str) -> str | None:
+    """Extract MMDDYY from a voyage-grid datetime like '6/25/2026 1:00:00 PM'.
+
+    Returns None if the date portion can't be parsed, so callers never raise a
+    false 'wrong date' on an unexpected OCR format.
+    """
+    if not grid_datetime:
+        return None
+    date_token = grid_datetime.strip().split(" ")[0]  # '6/25/2026'
+    for fmt in ("%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(date_token, fmt).strftime("%m%d%y")
+        except ValueError:
+            continue
+    return None
 
 
 def match_departure_time(target_time: str, grid_times: list[str]) -> int | None:
