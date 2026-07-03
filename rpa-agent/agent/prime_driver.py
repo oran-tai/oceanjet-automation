@@ -309,9 +309,17 @@ class PrimeDriver:
         leaving a STALE value from the previous booking (observed in production:
         BW5276308 inherited a prior 13-Jul booking's date because its own date
         write didn't land, and time-only voyage matching booked the wrong day).
-        Read the field back and retry; if it positively reads a WRONG value,
-        raise rather than issue a wrong-date ticket.
+        Read the field back and retry.
+
+        When all 3 attempts fail, the usual cause is a modal popup eating the
+        clicks and keystrokes (observed in production: 'Session ID is missing'
+        after Refresh when the PRIME session breaks). Click Refresh — a broken
+        session re-surfaces its popup — then classify the blocker via Gemini:
+        popup found -> UNEXPECTED_POPUP (system-level, engineer must intervene),
+        success popup -> ORPHAN_TICKET_DETECTED, no blocker ->
+        PRIME_VALIDATION_ERROR. Never proceeds with an unverified date.
         """
+        actual = ""
         for attempt in range(3):
             edit.click_input()
             send_keys("{HOME}")
@@ -325,18 +333,44 @@ class PrimeDriver:
                 f"expected {prime_date!r} (attempt {attempt + 1}/3) — retrying"
             )
 
-        final = normalize_prime_date_field(self._read_date_field(edit))
-        if final and final != prime_date:
-            raise PrimeError(
-                TicketErrorCode.PRIME_VALIDATION_ERROR,
-                f"{label} date did not take: field shows {final}, expected "
-                f"{prime_date}. Refusing to book the wrong date.",
-            )
-        # Field unreadable — don't block on a read failure; the voyage-date
-        # guard in select_voyage is the backstop against a wrong-date grid.
         logger.warning(
-            f"{label} date field could not be verified (read empty); "
-            f"relying on voyage-date guard"
+            f"{label} date did not take after 3 attempts — clicking Refresh "
+            f"and checking for a blocking popup"
+        )
+        try:
+            self.click_refresh()
+        except PrimeError as e:
+            # A modal popup can swallow the Refresh click too — classification
+            # below is what matters, so don't let the Refresh failure mask it.
+            logger.warning(f"Refresh before blocker classification failed: {e.message}")
+
+        blocker = self._classify_form_blocker()
+
+        if blocker["type"] == "success_popup":
+            pax_name = " ".join(p for p in (blocker["first_name"], blocker["last_name"]) if p).strip()
+            pax_label = pax_name or "unknown passenger (name not readable)"
+            raise PrimeError(
+                TicketErrorCode.ORPHAN_TICKET_DETECTED,
+                f"Found orphan success popup while filling the {label} date. "
+                f"PRESERVE THESE CODES: {blocker['codes']} for passenger: {pax_label}. "
+                f"Popup text: {blocker['text']}. Manual reconciliation required — "
+                f"these codes do NOT belong to the current booking.",
+            )
+
+        if blocker["type"] in ("error_popup", "print_preview"):
+            raise PrimeError(
+                TicketErrorCode.UNEXPECTED_POPUP,
+                f"{label} date did not take after 3 attempts: a "
+                f"{blocker['type'].replace('_', ' ')} is blocking the form. "
+                f"Popup text: {blocker['text'] or '<unreadable>'}. "
+                f"Engineer intervention required (e.g. re-login to PRIME).",
+            )
+
+        raise PrimeError(
+            TicketErrorCode.PRIME_VALIDATION_ERROR,
+            f"{label} date did not take: field last read "
+            f"{actual or '<unreadable>'!r}, expected {prime_date!r}, and no "
+            f"blocking popup was found. Refusing to book the wrong date.",
         )
 
     def _classify_form_blocker(self) -> dict:

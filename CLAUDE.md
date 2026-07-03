@@ -85,7 +85,7 @@ type C:\oceanjet-automation\orchestrator\.env
 **Three Gemini OCR call sites in the post-Confirm / blocker-detection code:**
 1. `_read_post_confirm_popup()` — used by `_handle_confirm_dialog` after Yes-on-Confirm. Structured prompt (`POPUP: SUCCESS|ERROR|NONE` + `TEXT` / `CODES` / `FIRST_NAME` / `LAST_NAME`). Explicit "respond NONE if no popup is visible — do NOT describe form contents" to prevent the form rates panel from being misread as popup text. Saves the screenshot to `debug/post_confirm_no_popup_*.png` whenever it returns no popup so we can diagnose retroactively.
 2. `_ocr_post_confirm_screen()` — used inside `_check_error_after_confirm` when the UIA scan times out. Looks for popup + seat availability (TC/OA/BC). 10-retry × 30s sleeps (~5min budget).
-3. `_classify_form_blocker()` — used on station-select failure and inside `_dismiss_error_popup`. Four-way classification: `success_popup` / `print_preview` / `error_popup` / `none`. When `success_popup`, also reads `First Name` / `Last Name` from the form behind the popup so orphan tickets carry the pax identity.
+3. `_classify_form_blocker()` — used on station-select failure, on date-fill read-back failure (`_type_date_field`), and inside `_dismiss_error_popup`. Four-way classification: `success_popup` / `print_preview` / `error_popup` / `none`. When `success_popup`, also reads `First Name` / `Last Name` from the form behind the popup so orphan tickets carry the pax identity.
 
 **`_handle_confirm_dialog` retry budget:** 5 OCR attempts × 30s sleeps (~2.5min) when no popup is visible — UIA finds the popup window before PRIME finishes painting its pixels (observed: 30s+ window-create-to-text-paint gap under load). Never clicks OK on the popup when classification fails — leaves it for the safe cleanup block.
 
@@ -97,6 +97,8 @@ type C:\oceanjet-automation\orchestrator\.env
 - Caller responsibility: convert the returned dict into `ORPHAN_TICKET_DETECTED` so codes are preserved for manual reconciliation
 
 **`_dismiss_same_station_dialog()`** is a separate helper for the 'Origin and Destination must not be the same' case — a fast inline dismiss on combo change, not an error-flow cleanup. Do not merge it into `_dismiss_error_popup()`.
+
+**Date-fill blocker check (`_type_date_field`)**: 3 fill + read-back attempts; a mismatch usually means a modal popup is eating the keystrokes (observed: 'Session ID is missing' after Refresh when the PRIME session breaks). On failure: click Refresh (a broken session re-surfaces its popup), classify via `_classify_form_blocker()`, then dispatch — `error_popup`/`print_preview` → `UNEXPECTED_POPUP` (system-level: stops the loop, alerts webhook 1 only, engineer must re-login), `success_popup` → `ORPHAN_TICKET_DETECTED`, `none` → `PRIME_VALIDATION_ERROR` (booking-level). Never proceeds with an unverified date — there is no continue-on-unreadable fallback; the voyage-date guard in `select_voyage` stays as defense-in-depth for voyage-only mode (pax 2+).
 
 **Sold-out detection** has two trigger points:
 1. COMError on gender combo → popup blocking form → `_check_sold_out_after_voyage()`

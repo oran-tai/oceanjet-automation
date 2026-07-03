@@ -5,9 +5,10 @@ NONE of these modes click Issue — no real ticket is ever created.
 
 Modes:
   py test_date_guard.py readback --date "Thu, Jun 25th 2026"
-        Types the date into PRIME's Departure Date field, reads it back, and
-        prints what UIA returned. Answers the open question: can we read the
-        masked edit on this machine? (If it prints the date -> read-back works.)
+        Types the date into PRIME's Departure Date field via _type_date_field,
+        which self-verifies by reading the field back. Success means read-back
+        works on this machine. Failure now raises (after a Refresh + Gemini
+        blocker check) — there is no silent voyage-guard fallback anymore.
 
   py test_date_guard.py happy --origin CEB --dest TAG \
         --date "Thu, Jun 25th 2026" --time "1:00 PM"
@@ -80,17 +81,19 @@ def main():
         trip_details = driver._get_trip_details_pane()
         edit = trip_details.children(control_type="Edit")[1]
         want = bookaway_date_to_prime(args.date)
-        driver._type_date_field(edit, want, "Departure")
+        try:
+            driver._type_date_field(edit, want, "Departure")
+        except PrimeError as e:
+            logger.error(
+                f"READ-BACK FAILED — _type_date_field raised {e.error_code.value}: {e.message}\n"
+                "An unverifiable date is now a hard failure (no voyage-guard fallback). "
+                "If no popup was on screen, UIA can't read this masked edit on this "
+                "machine — consider an OCR fallback."
+            )
+            sys.exit(1)
         got = normalize_prime_date_field(driver._read_date_field(edit))
         logger.info(f"Typed {want!r}; field reads back {got!r}")
-        if not got:
-            logger.warning("READ-BACK RETURNED EMPTY — UIA can't read this masked edit on this "
-                           "machine. _type_date_field can't self-verify; rely on the voyage-date "
-                           "guard (and consider an OCR fallback).")
-        elif got == want:
-            logger.info("READ-BACK OK — the date verification will work in production.")
-        else:
-            logger.error(f"MISMATCH — field shows {got}, expected {want}.")
+        logger.info("READ-BACK OK — the date verification will work in production.")
         return
 
     if args.mode == "happy":
