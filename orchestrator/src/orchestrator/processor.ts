@@ -368,7 +368,7 @@ export async function processBooking(
             reference,
             bookingId,
             'APPROVAL_FAILED',
-            `Approval API failed after ${maxRetries} retries: ${error.message}`,
+            `Approval API failed after ${maxRetries} retries: ${error.message}. Please approve manually.`,
             [...ticketResult.departureTickets, ...ticketResult.returnTickets]
           );
           logger.error('Approval failed after retries', {
