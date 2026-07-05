@@ -67,20 +67,20 @@ oceanjet-automation/
 │   │   │   └── time.ts          — 24h→12h time conversion
 │   │   ├── config.ts            — Env-based config, TARGET_BOOKING, BigQuery, Windows trim compat
 │   │   └── index.ts             — Entry point
-│   └── tests/                   — 47 unit tests (vitest)
+│   └── tests/                   — 49 unit tests (vitest)
 │
 ├── rpa-agent/                   # Python microservice
 │   ├── agent/
 │   │   ├── server.py            — FastAPI HTTP server (POST /issue-tickets, GET /health)
 │   │   ├── prime_driver.py      — pywinauto logic: connect, fill forms, issue tickets
 │   │   ├── error_codes.py       — TicketErrorCode enum + PrimeError exception
-│   │   ├── date_utils.py        — Date conversion, departure time matching
+│   │   ├── date_utils.py        — Date conversion, departure time matching, date-field normalization + guard helpers
 │   │   └── config.py            — Port, auth token, timeouts, Gemini API key
 │   ├── tests/
 │   │   ├── test_date_utils.py               — Unit tests (pytest-safe)
-│   │   ├── test_error_station_not_found.py  — Standalone PRIME integration test
-│   │   └── test_error_trip_not_found.py     — Standalone PRIME integration test
+│   │   └── test_error_*.py                  — Standalone PRIME integration tests, one per error scenario (station_not_found, trip_not_found, trip_sold_out, voyage_time_mismatch, accommodation_unavailable, unexpected_popup)
 │   ├── test_fill_form.py        — Standalone happy-path test
+│   ├── test_date_guard.py       — Standalone stale-date-guard test (readback / happy / guard modes)
 │   ├── requirements.txt
 │   ├── install.bat / start.bat
 │   └── .env.example
@@ -202,17 +202,18 @@ The agent must map what it observes in PRIME's UI to one of these error codes:
 | Login screen appears during operation | `SESSION_EXPIRED` |
 | Agent internal exception | `RPA_INTERNAL_ERROR` |
 | Late-arriving success popup found by cleanup or station-select recovery (codes preserved) | `ORPHAN_TICKET_DETECTED` |
+| Popup / print preview blocking the form when the date fill fails 3 read-back attempts (e.g. 'Session ID is missing') | `UNEXPECTED_POPUP` |
 | Can't classify the failure | `UNKNOWN_ERROR` |
 
 ## PRIME UI Flow (per passenger)
 
 1. Click **Refresh** to reset form
 2. Select trip type: **One Way** or **Round Trip**
-3. Enter departure **date** (format: `M/D/YY`)
+3. Enter departure **date** (format: `M/D/YY`) — typed, then read back to verify it took (3 attempts; persistent failure triggers the Gemini popup-blocker check)
 4. Select **origin** station code from dropdown
 5. Select **destination** station code from dropdown
 6. Click voyage search button → opens **Voyage Schedule** dialog
-7. Screenshot the voyage grid → send to **Gemini Flash Vision** → extract rows as JSON → match departure time → arrow-key navigate → click **Select**
+7. Screenshot the voyage grid → send to **Gemini Flash Vision** → extract rows as JSON → match departure time → verify the row's date equals the requested departure (stale-date guard) → arrow-key navigate → click **Select**
 8. Select **accommodation** type from dropdown (TC, BC, OA)
 9. If round-trip: enter return date, search return voyages, select return voyage
 10. Enter **first name**, **last name**, **age**, **sex** (M/F), **contact info** (email)
@@ -407,7 +408,7 @@ All failures emit `booking_failed` — the `error_code` field distinguishes the 
 | Category | Error codes |
 |---|---|
 | Booking-level (release + continue) | `PASSENGER_VALIDATION_ERROR`, `STATION_NOT_FOUND`, `TRIP_NOT_FOUND`, `TRIP_SOLD_OUT`, `VOYAGE_TIME_MISMATCH`, `ACCOMMODATION_UNAVAILABLE`, `PRIME_VALIDATION_ERROR`, `UNKNOWN_ERROR` |
-| System-level (release + stop) | `PRIME_TIMEOUT`, `PRIME_CRASH`, `SESSION_EXPIRED`, `RPA_INTERNAL_ERROR`, `ORPHAN_TICKET_DETECTED` |
+| System-level (release + stop) | `PRIME_TIMEOUT`, `PRIME_CRASH`, `SESSION_EXPIRED`, `RPA_INTERNAL_ERROR`, `ORPHAN_TICKET_DETECTED`, `UNEXPECTED_POPUP` |
 | Approval (keep claimed) | `APPROVAL_FAILED` |
 
 ### Dashboard Metrics
@@ -429,7 +430,7 @@ Service account `oceanjet-events@travelier-ai.iam.gserviceaccount.com` with `big
 - **What happens after clicking Issue?** → Confirmation dialog appears ("Are you sure?"). Click Yes to issue. ~3s later, a result dialog appears.
 - **What does the success dialog look like?** → "Process Complete. Ticket number(s): [XXXXXXXX]." — text is painted directly on the Delphi window surface, **not accessible via UIA**. Must use Gemini Vision screenshot OCR to read it.
 - **What does a failure/error dialog look like?** → Same Delphi dialog with error message text. Also requires Gemini Vision to read. Error text is mapped to error codes by the RPA agent.
-- **Does PRIME have any idle timeout or auto-logout?** → Still unknown. `SESSION_EXPIRED` error code is defined but detection is not yet implemented (1 of 12 error codes remaining).
+- **Does PRIME have any idle timeout or auto-logout?** → Still unknown. `SESSION_EXPIRED` error code is defined but detection is not yet implemented (1 of 14 error codes remaining). Note: a broken session that pops 'Session ID is missing' over the form is now caught at date-fill time as `UNEXPECTED_POPUP`.
 - **Does PRIME return 1 or 2 ticket numbers for a round-trip booking?** → **2 ticket numbers per passenger**, comma-separated in one dialog: `[13023072,13023073]`. First = departure, second = return. For 2 passengers round-trip: booking code = all 4 tickets, `departureTrip.seatsNumber` = [dep1, dep2], `returnTrip.seatsNumber` = [ret1, ret2].
 
 ## Open Questions

@@ -129,7 +129,7 @@ Returns `TicketResult` with `departureTickets`, `returnTickets`, and per-passeng
 |---|---|---|
 | `STATION_NOT_FOUND` | Booking | Station not in PRIME dropdown (after blocker classifier rules out other causes) |
 | `TRIP_NOT_FOUND` | Booking | Voyage grid is empty |
-| `VOYAGE_TIME_MISMATCH` | Booking | No voyage matches departure time |
+| `VOYAGE_TIME_MISMATCH` | Booking | No voyage matches departure time, or the selected voyage's date doesn't match the requested departure (stale date-field guard) |
 | `ACCOMMODATION_UNAVAILABLE` | Booking | Accommodation not in dropdown |
 | `PASSENGER_VALIDATION_ERROR` | Booking | Invalid passenger data (pre-PRIME) |
 | `TRIP_SOLD_OUT` | Booking | No seats available |
@@ -138,7 +138,8 @@ Returns `TicketResult` with `departureTickets`, `returnTickets`, and per-passeng
 | `PRIME_CRASH` | System | Can't connect to PRIME |
 | `SESSION_EXPIRED` | System | PRIME login timed out |
 | `RPA_INTERNAL_ERROR` | System | Screenshot/API/internal failure |
-| `ORPHAN_TICKET_DETECTED` | System | Late-arriving success popup found by cleanup or station-select recovery — codes + pax name preserved in Slack alert for manual reconciliation |
+| `ORPHAN_TICKET_DETECTED` | System | Late-arriving success popup found by cleanup, station-select recovery, or date-fill blocker check — codes + pax name preserved in Slack alert for manual reconciliation |
+| `UNEXPECTED_POPUP` | System | Popup blocking the form (e.g. 'Session ID is missing') found after the date fill fails 3 read-back attempts — popup text in Slack alert, engineer must fix |
 | `UNKNOWN_ERROR` | System | Unhandled exception |
 
 ## Debug Artifacts

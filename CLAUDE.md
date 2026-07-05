@@ -87,7 +87,7 @@ type C:\oceanjet-automation\orchestrator\.env
 2. `_ocr_post_confirm_screen()` — used inside `_check_error_after_confirm` when the UIA scan times out. Looks for popup + seat availability (TC/OA/BC). 10-retry × 30s sleeps (~5min budget).
 3. `_classify_form_blocker()` — used on station-select failure, on date-fill read-back failure (`_type_date_field`), and inside `_dismiss_error_popup`. Four-way classification: `success_popup` / `print_preview` / `error_popup` / `none`. When `success_popup`, also reads `First Name` / `Last Name` from the form behind the popup so orphan tickets carry the pax identity.
 
-**`_handle_confirm_dialog` retry budget:** 5 OCR attempts × 30s sleeps (~2.5min) when no popup is visible — UIA finds the popup window before PRIME finishes painting its pixels (observed: 30s+ window-create-to-text-paint gap under load). Never clicks OK on the popup when classification fails — leaves it for the safe cleanup block.
+**`_handle_confirm_dialog` retry budget:** 6 OCR attempts × 30s sleeps (~3min) when no popup is visible — UIA finds the popup window before PRIME finishes painting its pixels (observed: 30s+ window-create-to-text-paint gap under load). Never clicks OK on the popup when classification fails — leaves it for the safe cleanup block.
 
 **`_dismiss_error_popup()` is popup-aware** — refuses to dismiss success popups:
 - Finds candidate small `OCEAN FAST FERRIES` window (top-level or child of main window)
