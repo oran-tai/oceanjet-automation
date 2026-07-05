@@ -14,6 +14,7 @@ export type TicketErrorCode =
   | 'ACCOMMODATION_UNAVAILABLE'   // Requested class sold out (other classes may have seats)
   | 'PASSENGER_VALIDATION_ERROR'  // Missing or invalid passenger details (name, age, gender)
   | 'PRIME_VALIDATION_ERROR'      // Catch-all for unexpected PRIME validation dialogs
+  | 'APPROVAL_FAILED'             // Tickets issued in PRIME but Bookaway approval API failed — booking stays claimed
   // System-level errors (stop loop + alert)
   | 'PRIME_TIMEOUT'               // PRIME became unresponsive
   | 'PRIME_CRASH'                 // PRIME application crashed
@@ -33,6 +34,7 @@ export const TICKET_ERROR_LABELS: Record<TicketErrorCode, string> = {
   ACCOMMODATION_UNAVAILABLE: 'Requested accommodation class is sold out',
   PASSENGER_VALIDATION_ERROR: 'Missing or invalid passenger details (check name, age, or gender)',
   PRIME_VALIDATION_ERROR: 'PRIME showed an unexpected validation error',
+  APPROVAL_FAILED: 'Tickets issued in PRIME but Bookaway approval failed — manual approval required',
   PRIME_TIMEOUT: 'PRIME became unresponsive (timeout)',
   PRIME_CRASH: 'PRIME application crashed',
   SESSION_EXPIRED: 'PRIME login session has expired',

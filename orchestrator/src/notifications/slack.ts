@@ -44,16 +44,21 @@ export async function notifyBookingFailure(
   reference: string,
   bookingId: string,
   errorCode: TicketErrorCode,
-  reason: string
+  reason: string,
+  ticketCodes?: string[]
 ): Promise<void> {
   const bookawayLink = `https://admin.bookaway.com/bookings?booking=${bookingId}`;
+  const codes = ticketCodes?.filter(Boolean) ?? [];
   const message =
     `:warning: *Booking Failed — Manual Review Required*\n` +
     `*Reference:* ${reference}\n` +
     `*Error:* \`${errorCode}\`\n` +
+    (codes.length > 0
+      ? `*Ticket Codes:* ${codes.join(', ')}\n`
+      : '') +
     `*Details:* ${reason}\n` +
     `*Link:* <${bookawayLink}|Open in Bookaway>`;
-  logger.warn('Booking failure alert', { reference, errorCode, reason });
+  logger.warn('Booking failure alert', { reference, errorCode, reason, ticketCodes: codes });
   await sendSlackMessage(message, PRIMARY_ONLY_BOOKING_ERRORS.has(errorCode));
 }
 

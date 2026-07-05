@@ -367,8 +367,9 @@ export async function processBooking(
           await notifyBookingFailure(
             reference,
             bookingId,
-            'UNKNOWN_ERROR',
-            `Approval API failed after ${maxRetries} retries: ${error.message}`
+            'APPROVAL_FAILED',
+            `Approval API failed after ${maxRetries} retries: ${error.message}`,
+            [...ticketResult.departureTickets, ...ticketResult.returnTickets]
           );
           logger.error('Approval failed after retries', {
             reference,
