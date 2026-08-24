@@ -115,7 +115,7 @@ Slack alert includes the ticket codes and pax First/Last Name (read by Gemini fr
 **Station dropdown retry**: if `select()` fails, `_select_station_with_recovery` classifies the blocker via Gemini and dispatches: success_popup → raise `ORPHAN_TICKET_DETECTED`, print_preview → close, error_popup → dismiss + retry, none → retry anyway then raise `STATION_NOT_FOUND`.
 
 ## Pacing
-- Inter-booking delay: 30–90s (orchestrator, only after approved bookings)
+- Inter-booking delay: 90–180s, avg 135s (orchestrator, only after approved bookings; the dashboard's runtime formula relies on the 135s average)
 - Inter-passenger delay: 5–15s (RPA agent)
 - Booking error cooldown: 24h default (`BOOKING_ERROR_COOLDOWN_MS`), in-memory, resets on restart
 
