@@ -1280,8 +1280,19 @@ class PrimeDriver:
         time.sleep(0.2)
 
         # Sex (combo_box[0]): map "Male" -> "M", "Female" -> "F"
+        # The Delphi dropdown materializes its list items lazily — a slow expand
+        # makes pywinauto report "item 'M' not found" even though it exists, so
+        # retry once. COMError must propagate untouched: it's the sold-out-popup
+        # signal the caller routes to _check_sold_out_after_voyage().
         gender_code = GENDER_MAP.get(passenger["gender"], passenger["gender"])
-        combos[0].select(gender_code)
+        try:
+            combos[0].select(gender_code)
+        except _ctypes.COMError:
+            raise
+        except Exception as e:
+            logger.warning(f"Sex select failed ({e}), retrying once in 1s")
+            time.sleep(1)
+            personal.children(control_type="ComboBox")[0].select(gender_code)
         time.sleep(0.2)
 
         # Contact Info (edit[0])
