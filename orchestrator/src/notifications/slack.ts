@@ -38,6 +38,7 @@ async function sendSlackMessage(text: string, primaryOnly = false): Promise<void
 
 const PRIMARY_ONLY_BOOKING_ERRORS: ReadonlySet<TicketErrorCode> = new Set([
   'STATION_NOT_FOUND',
+  'ACCOMMODATION_UNAVAILABLE',
 ]);
 
 export async function notifyBookingFailure(
