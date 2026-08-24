@@ -763,16 +763,27 @@ class PrimeDriver:
             time.sleep(0.5)
 
         if not voyage_only:
-            # 9. Select accommodation (combo_box[0])
-            combos = trip_details.children(control_type="ComboBox")
-            accom_combo = combos[0]
-            try:
-                accom_combo.select(leg["accommodation"])
-            except Exception:
-                raise PrimeError(
-                    TicketErrorCode.ACCOMMODATION_UNAVAILABLE,
-                    f"Accommodation '{leg['accommodation']}' not found in PRIME dropdown",
-                )
+            # 9. Select accommodation (combo_box[0]) — PRIME repopulates this combo
+            # after the voyage commits, so retry with a 1s wait before giving up
+            for attempt in range(3):
+                # Re-bind each attempt: the pane redraw stales old handles
+                combos = trip_details.children(control_type="ComboBox")
+                accom_combo = combos[0]
+                try:
+                    accom_combo.select(leg["accommodation"])
+                    break
+                except Exception as e:
+                    if attempt < 2:
+                        logger.warning(
+                            f"Accommodation select attempt {attempt + 1} failed "
+                            f"({e}), retrying in 1s"
+                        )
+                        time.sleep(1)
+                    else:
+                        raise PrimeError(
+                            TicketErrorCode.ACCOMMODATION_UNAVAILABLE,
+                            f"Accommodation '{leg['accommodation']}' not found in PRIME dropdown",
+                        )
             time.sleep(0.3)
 
         return voyage_result
