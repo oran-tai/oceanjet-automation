@@ -283,10 +283,10 @@ class PrimeDriver:
                 f"Failed to click Refresh: {e}",
             )
 
-    def _read_date_field(self, edit) -> str:
-        """Best-effort read of a PRIME masked date field's current value.
+    def _read_edit_value(self, edit) -> str:
+        """Best-effort read of a PRIME Edit control's current value.
 
-        Delphi masked edits don't expose text consistently — try ValuePattern,
+        Delphi edits don't expose text consistently — try ValuePattern,
         then legacy Value, then window text. Returns '' if all fail.
         """
         for getter in (
@@ -301,6 +301,171 @@ class PrimeDriver:
             except Exception:
                 continue
         return ""
+
+    def _read_combo_value(self, combo) -> str:
+        """Best-effort read of a PRIME combo's displayed value via its Edit child.
+
+        PRIME's Delphi combos expose an Edit child (the visible text) and a
+        Button 'Open' child (the dropdown arrow). Returns '' if unreadable.
+        """
+        try:
+            edit = combo.children(control_type="Edit")[0]
+        except Exception:
+            return ""
+        return self._read_edit_value(edit)
+
+    def _select_accommodation(self, trip_details, code: str):
+        """Select the Accom. Type Code combo, falling back to a physical open.
+
+        Fast path: pywinauto's select() — UIA ExpandCollapse to drop the list,
+        enumerate the items by name, SelectionItem.Select, collapse. PRIME
+        repopulates this combo after the voyage commits, so the first attempt
+        can hit an empty list; a 1s retry covers that lag.
+
+        Observed in production (Sept 23, 2026): all select() attempts fail with
+        "item 'TC' not found or can't be accessed" while the dropdown never
+        visibly opens. The UIA Expand no-ops on the Delphi combo, so there are
+        no list children to enumerate and pywinauto reports the item missing —
+        PRIME never said TC was unavailable. Fallback: click the combo's real
+        'Open' button (child Button, InvokePattern) to drop the list, click the
+        item, and verify by reading the combo's Edit child back.
+
+        Error split: ACCOMMODATION_UNAVAILABLE (booking-level, 24h cooldown) is
+        raised only when a dropped list was actually enumerated and the code
+        wasn't in it. A list that never opens is a UI-driving failure, raised
+        as RPA_INTERNAL_ERROR so a bookable booking isn't parked for a day.
+        """
+        def combo():
+            # Re-bind on every access: the pane redraw stales old handles
+            return trip_details.children(control_type="ComboBox")[0]
+
+        def verify(source: str) -> bool:
+            actual = self._read_combo_value(combo())
+            if actual.strip().upper() == code.upper():
+                logger.info(f"Accommodation '{code}' verified via {source}")
+                return True
+            if not actual:
+                # Combo text not exposed — trust the action that reported success
+                logger.info(
+                    f"Accommodation combo text unreadable after {source}; "
+                    f"trusting reported selection of '{code}'"
+                )
+                return True
+            logger.warning(
+                f"Accommodation combo reads '{actual}' after {source}, "
+                f"expected '{code}'"
+            )
+            return False
+
+        # --- Fast path: pywinauto select() ---
+        for attempt in range(2):
+            try:
+                combo().select(code)
+                if verify("select()"):
+                    return
+                break  # selection landed on something else — go physical
+            except Exception as e:
+                logger.warning(
+                    f"Accommodation select() attempt {attempt + 1} failed ({e})"
+                )
+                if attempt == 0:
+                    time.sleep(1)
+
+        # --- Fallback: physically open the dropdown via its 'Open' button ---
+        logger.warning(
+            "Accommodation select() did not land — opening dropdown via 'Open' button"
+        )
+        seen_items = None
+        for attempt in range(2):
+            c = combo()
+            try:
+                c.child_window(title="Open", control_type="Button").click_input()
+            except Exception as e:
+                logger.warning(
+                    f"Could not click accommodation 'Open' button "
+                    f"(attempt {attempt + 1}): {e}"
+                )
+            time.sleep(0.7)
+
+            items = self._find_dropdown_items(combo())
+            if not items:
+                logger.warning(
+                    f"Accommodation dropdown showed no items after 'Open' click "
+                    f"(attempt {attempt + 1})"
+                )
+                time.sleep(1)
+                continue
+
+            seen_items = [i.window_text().strip() for i in items]
+            match = next(
+                (i for i in items if i.window_text().strip().upper() == code.upper()),
+                None,
+            )
+            if match is None:
+                # List is open and enumerated — code genuinely absent.
+                # Close it so it doesn't eat the cleanup block's Refresh click.
+                send_keys("{ESC}")
+                time.sleep(0.3)
+                break
+
+            match.click_input()
+            time.sleep(0.5)
+            if verify("'Open' click"):
+                return
+            break
+
+        # --- Give up: classify honestly ---
+        self._save_debug_screenshot("accommodation_select_failed")
+        if seen_items is not None and not any(
+            n.upper() == code.upper() for n in seen_items
+        ):
+            raise PrimeError(
+                TicketErrorCode.ACCOMMODATION_UNAVAILABLE,
+                f"Accommodation '{code}' not found in PRIME dropdown "
+                f"(items: {seen_items})",
+            )
+        raise PrimeError(
+            TicketErrorCode.RPA_INTERNAL_ERROR,
+            f"Could not select accommodation '{code}': dropdown "
+            f"{'items ' + str(seen_items) if seen_items else 'never opened'} "
+            f"and selection did not verify",
+        )
+
+    def _find_dropdown_items(self, combo) -> list:
+        """List items of an open PRIME combo.
+
+        Win32/Delphi combos expose the dropped list either under the combo
+        element (List -> ListItem) or, for the ComboLBox popup, as a top-level
+        List window — search both.
+        """
+        try:
+            items = combo.descendants(control_type="ListItem")
+            if items:
+                return items
+        except Exception as e:
+            logger.debug(f"Combo descendant scan failed: {e}")
+        try:
+            for w in Desktop(backend="uia").windows():
+                if w.element_info.class_name == "ComboLBox":
+                    return w.descendants(control_type="ListItem")
+        except Exception as e:
+            logger.debug(f"ComboLBox desktop scan failed: {e}")
+        return []
+
+    def _save_debug_screenshot(self, prefix: str):
+        """Best-effort full-screen capture into debug/ for after-the-fact diagnosis."""
+        try:
+            from datetime import datetime
+            from pathlib import Path
+            from PIL import ImageGrab
+            debug_dir = Path("debug")
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            path = debug_dir / f"{prefix}_{ts}.png"
+            ImageGrab.grab().save(path, format="PNG")
+            logger.info(f"Saved debug screenshot: {path}")
+        except Exception as e:
+            logger.debug(f"Failed to save debug screenshot: {e}")
 
     def _type_date_field(self, edit, prime_date: str, label: str):
         """Type a MMDDYY date into a PRIME masked-edit field and verify it took.
@@ -325,7 +490,7 @@ class PrimeDriver:
             send_keys("{HOME}")
             send_keys(prime_date, with_spaces=True)
             time.sleep(0.3)
-            actual = normalize_prime_date_field(self._read_date_field(edit))
+            actual = normalize_prime_date_field(self._read_edit_value(edit))
             if actual == prime_date:
                 return
             logger.warning(
@@ -763,27 +928,9 @@ class PrimeDriver:
             time.sleep(0.5)
 
         if not voyage_only:
-            # 9. Select accommodation (combo_box[0]) — PRIME repopulates this combo
-            # after the voyage commits, so retry with a 1s wait before giving up
-            for attempt in range(3):
-                # Re-bind each attempt: the pane redraw stales old handles
-                combos = trip_details.children(control_type="ComboBox")
-                accom_combo = combos[0]
-                try:
-                    accom_combo.select(leg["accommodation"])
-                    break
-                except Exception as e:
-                    if attempt < 2:
-                        logger.warning(
-                            f"Accommodation select attempt {attempt + 1} failed "
-                            f"({e}), retrying in 1s"
-                        )
-                        time.sleep(1)
-                    else:
-                        raise PrimeError(
-                            TicketErrorCode.ACCOMMODATION_UNAVAILABLE,
-                            f"Accommodation '{leg['accommodation']}' not found in PRIME dropdown",
-                        )
+            # 9. Select accommodation (combo_box[0]) — select() with a physical
+            # 'Open'-button fallback and read-back verification
+            self._select_accommodation(trip_details, leg["accommodation"])
             time.sleep(0.3)
 
         return voyage_result
