@@ -343,7 +343,7 @@ class PrimeDriver:
                 because the pane redraw stales old handles).
             index: ComboBox child index within the pane (UIA tree order).
             code: Item text to select.
-            label: Human label for logs ("accommodation", "sex").
+            label: Human label for logs ("accommodation", "sex", "origin", "destination").
             absent_error: Error code when the opened list lacks `code`.
             propagate_comerror: Re-raise COMError from select() untouched.
                 The sex combo's COMError is the sold-out-popup signal that
@@ -784,21 +784,42 @@ class PrimeDriver:
             "raw": raw,
         }
 
-    def _select_station_with_recovery(self, combo, station_name: str, role: str):
-        """Select a station from a combo, recovering from common form blockers.
+    def _select_station_with_recovery(self, trip_details, index: int,
+                                      station_name: str, role: str):
+        """Select a station combo, recovering from common form blockers.
 
-        Failure modes recovered: error popup (dismiss), print preview (close).
-        Refuses to dismiss a success popup — raises ORPHAN_TICKET_DETECTED with
-        the ticket codes Gemini OCR'd so they aren't silently lost.
+        Selection goes through _select_combo_verified (select() + physical
+        'Open' fallback + read-back). If the list was opened and enumerated
+        without the station, that's a genuine STATION_NOT_FOUND — raised
+        immediately. Any other failure (list never opened, value didn't
+        verify) usually means something is blocking the form, so classify it
+        via Gemini: error popup (dismiss), print preview (close). Refuses to
+        dismiss a success popup — raises ORPHAN_TICKET_DETECTED with the
+        ticket codes Gemini OCR'd so they aren't silently lost. Then retries
+        the verified select once.
 
         Args:
-            combo: pywinauto ComboBox wrapper for origin or destination.
+            trip_details: Trip Details pane wrapper (combo re-bound per access).
+            index: ComboBox index within the pane (2 = origin, 1 = destination).
             station_name: PRIME station code to select.
             role: "origin" or "destination" — used in error messages.
         """
+        def attempt():
+            self._select_combo_verified(
+                trip_details, index, station_name, role,
+                TicketErrorCode.STATION_NOT_FOUND,
+            )
+
         try:
-            combo.select(station_name)
+            attempt()
             return
+        except PrimeError as select_e:
+            if select_e.error_code == TicketErrorCode.STATION_NOT_FOUND:
+                raise  # list opened and enumerated — station genuinely absent
+            logger.warning(
+                f"{role.capitalize()} station-select failed for "
+                f"'{station_name}': {select_e} — invoking blocker classifier"
+            )
         except Exception as select_e:
             logger.warning(
                 f"{role.capitalize()} station-select failed for "
@@ -848,11 +869,14 @@ class PrimeDriver:
             )
 
         try:
-            combo.select(station_name)
-        except Exception:
+            attempt()
+        except PrimeError:
+            raise
+        except Exception as e:
             raise PrimeError(
-                TicketErrorCode.STATION_NOT_FOUND,
-                f"{role.capitalize()} station '{station_name}' not found in PRIME dropdown",
+                TicketErrorCode.RPA_INTERNAL_ERROR,
+                f"{role.capitalize()} station select for '{station_name}' "
+                f"failed after blocker recovery: {e}",
             )
 
     def fill_trip_details(self, leg, trip_type: str, return_leg=None,
@@ -895,7 +919,6 @@ class PrimeDriver:
             time.sleep(0.3)
 
             edits = trip_details.children(control_type="Edit")
-            combos = trip_details.children(control_type="ComboBox")
 
             # 2. Fill departure date (edit[1] in tree order), verified
             prime_date = bookaway_date_to_prime(leg["date"])
@@ -910,12 +933,12 @@ class PrimeDriver:
                 self._type_date_field(edits[0], return_date, "Return")
 
             # 4. Select origin (combo_box[2])
-            self._select_station_with_recovery(combos[2], leg["origin"], "origin")
+            self._select_station_with_recovery(trip_details, 2, leg["origin"], "origin")
             time.sleep(0.3)
             self._dismiss_same_station_dialog()
 
             # 5. Select destination (combo_box[1])
-            self._select_station_with_recovery(combos[1], leg["destination"], "destination")
+            self._select_station_with_recovery(trip_details, 1, leg["destination"], "destination")
             time.sleep(0.3)
             self._dismiss_same_station_dialog()
 
