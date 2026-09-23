@@ -314,45 +314,58 @@ class PrimeDriver:
             return ""
         return self._read_edit_value(edit)
 
-    def _select_accommodation(self, trip_details, code: str):
-        """Select the Accom. Type Code combo, falling back to a physical open.
+    def _select_combo_verified(self, pane, index: int, code: str, label: str,
+                               absent_error: TicketErrorCode,
+                               propagate_comerror: bool = False):
+        """Select a PRIME combo value, falling back to a physical open.
 
         Fast path: pywinauto's select() — UIA ExpandCollapse to drop the list,
         enumerate the items by name, SelectionItem.Select, collapse. PRIME
-        repopulates this combo after the voyage commits, so the first attempt
-        can hit an empty list; a 1s retry covers that lag.
+        repopulates combos lazily (accommodation after the voyage commits), so
+        the first attempt can hit an empty list; a 1s retry covers that lag.
 
-        Observed in production (Sept 23, 2026): all select() attempts fail with
-        "item 'TC' not found or can't be accessed" while the dropdown never
-        visibly opens. The UIA Expand no-ops on the Delphi combo, so there are
-        no list children to enumerate and pywinauto reports the item missing —
-        PRIME never said TC was unavailable. Fallback: click the combo's real
-        'Open' button (child Button, InvokePattern) to drop the list, click the
+        Observed in production (Sept 23, 2026, accommodation): all select()
+        attempts fail with "item 'TC' not found or can't be accessed" while
+        the dropdown never visibly opens. The UIA Expand no-ops on the Delphi
+        combo, so there are no list children to enumerate and pywinauto
+        reports the item missing — PRIME never said TC was unavailable.
+        Fallback: click the combo's real 'Open' child button (or Alt+Down on
+        its Edit child, the button's access key) to drop the list, click the
         item, and verify by reading the combo's Edit child back.
 
-        Error split: ACCOMMODATION_UNAVAILABLE (booking-level, 24h cooldown) is
-        raised only when a dropped list was actually enumerated and the code
-        wasn't in it. A list that never opens is a UI-driving failure, raised
-        as RPA_INTERNAL_ERROR so a bookable booking isn't parked for a day.
+        Error split: `absent_error` (booking-level) is raised only when a
+        dropped list was actually enumerated and the code wasn't in it. A
+        list that never opens is a UI-driving failure, raised as
+        RPA_INTERNAL_ERROR so a bookable booking isn't parked for a day.
+
+        Args:
+            pane: Parent pane wrapper (re-queried for the combo on every access,
+                because the pane redraw stales old handles).
+            index: ComboBox child index within the pane (UIA tree order).
+            code: Item text to select.
+            label: Human label for logs ("accommodation", "sex").
+            absent_error: Error code when the opened list lacks `code`.
+            propagate_comerror: Re-raise COMError from select() untouched.
+                The sex combo's COMError is the sold-out-popup signal that
+                the caller routes to _check_sold_out_after_voyage().
         """
         def combo():
-            # Re-bind on every access: the pane redraw stales old handles
-            return trip_details.children(control_type="ComboBox")[0]
+            return pane.children(control_type="ComboBox")[index]
 
         def verify(source: str) -> bool:
             actual = self._read_combo_value(combo())
             if actual.strip().upper() == code.upper():
-                logger.info(f"Accommodation '{code}' verified via {source}")
+                logger.info(f"{label.capitalize()} '{code}' verified via {source}")
                 return True
             if not actual:
                 # Combo text not exposed — trust the action that reported success
                 logger.info(
-                    f"Accommodation combo text unreadable after {source}; "
+                    f"{label.capitalize()} combo text unreadable after {source}; "
                     f"trusting reported selection of '{code}'"
                 )
                 return True
             logger.warning(
-                f"Accommodation combo reads '{actual}' after {source}, "
+                f"{label.capitalize()} combo reads '{actual}' after {source}, "
                 f"expected '{code}'"
             )
             return False
@@ -364,33 +377,34 @@ class PrimeDriver:
                 if verify("select()"):
                     return
                 break  # selection landed on something else — go physical
+            except _ctypes.COMError:
+                if propagate_comerror:
+                    raise
+                logger.warning(
+                    f"{label.capitalize()} select() attempt {attempt + 1} hit COMError"
+                )
+                if attempt == 0:
+                    time.sleep(1)
             except Exception as e:
                 logger.warning(
-                    f"Accommodation select() attempt {attempt + 1} failed ({e})"
+                    f"{label.capitalize()} select() attempt {attempt + 1} failed ({e})"
                 )
                 if attempt == 0:
                     time.sleep(1)
 
-        # --- Fallback: physically open the dropdown via its 'Open' button ---
+        # --- Fallback: physically open the dropdown ---
         logger.warning(
-            "Accommodation select() did not land — opening dropdown via 'Open' button"
+            f"{label.capitalize()} select() did not land — opening dropdown physically"
         )
         seen_items = None
         for attempt in range(2):
-            c = combo()
-            try:
-                c.child_window(title="Open", control_type="Button").click_input()
-            except Exception as e:
-                logger.warning(
-                    f"Could not click accommodation 'Open' button "
-                    f"(attempt {attempt + 1}): {e}"
-                )
+            self._open_combo_dropdown(combo(), label, attempt)
             time.sleep(0.7)
 
             items = self._find_dropdown_items(combo())
             if not items:
                 logger.warning(
-                    f"Accommodation dropdown showed no items after 'Open' click "
+                    f"{label.capitalize()} dropdown showed no items after open "
                     f"(attempt {attempt + 1})"
                 )
                 time.sleep(1)
@@ -410,26 +424,46 @@ class PrimeDriver:
 
             match.click_input()
             time.sleep(0.5)
-            if verify("'Open' click"):
+            if verify("physical open"):
                 return
             break
 
         # --- Give up: classify honestly ---
-        self._save_debug_screenshot("accommodation_select_failed")
+        self._save_debug_screenshot(f"{label}_select_failed")
         if seen_items is not None and not any(
             n.upper() == code.upper() for n in seen_items
         ):
             raise PrimeError(
-                TicketErrorCode.ACCOMMODATION_UNAVAILABLE,
-                f"Accommodation '{code}' not found in PRIME dropdown "
+                absent_error,
+                f"{label.capitalize()} '{code}' not found in PRIME dropdown "
                 f"(items: {seen_items})",
             )
         raise PrimeError(
             TicketErrorCode.RPA_INTERNAL_ERROR,
-            f"Could not select accommodation '{code}': dropdown "
+            f"Could not select {label} '{code}': dropdown "
             f"{'items ' + str(seen_items) if seen_items else 'never opened'} "
             f"and selection did not verify",
         )
+
+    def _open_combo_dropdown(self, combo, label: str, attempt: int):
+        """Drop a PRIME combo's list: click its 'Open' child button, else
+        Alt+Down (the button's access key) on its Edit child."""
+        try:
+            combo.child_window(title="Open", control_type="Button").click_input()
+            return
+        except Exception as e:
+            logger.warning(
+                f"Could not click {label} 'Open' button (attempt {attempt + 1}): {e}"
+                f" — trying Alt+Down"
+            )
+        try:
+            combo.children(control_type="Edit")[0].click_input()
+            time.sleep(0.2)
+            send_keys("%{DOWN}")
+        except Exception as e:
+            logger.warning(
+                f"Alt+Down on {label} combo failed (attempt {attempt + 1}): {e}"
+            )
 
     def _find_dropdown_items(self, combo) -> list:
         """List items of an open PRIME combo.
@@ -930,7 +964,10 @@ class PrimeDriver:
         if not voyage_only:
             # 9. Select accommodation (combo_box[0]) — select() with a physical
             # 'Open'-button fallback and read-back verification
-            self._select_accommodation(trip_details, leg["accommodation"])
+            self._select_combo_verified(
+                trip_details, 0, leg["accommodation"], "accommodation",
+                TicketErrorCode.ACCOMMODATION_UNAVAILABLE,
+            )
             time.sleep(0.3)
 
         return voyage_result
@@ -1406,7 +1443,6 @@ class PrimeDriver:
         )
         personal = self._get_personal_details_pane()
         edits = personal.children(control_type="Edit")
-        combos = personal.children(control_type="ComboBox")
 
         # First Name (edit[2])
         edits[2].click_input()
@@ -1427,19 +1463,15 @@ class PrimeDriver:
         time.sleep(0.2)
 
         # Sex (combo_box[0]): map "Male" -> "M", "Female" -> "F"
-        # The Delphi dropdown materializes its list items lazily — a slow expand
-        # makes pywinauto report "item 'M' not found" even though it exists, so
-        # retry once. COMError must propagate untouched: it's the sold-out-popup
-        # signal the caller routes to _check_sold_out_after_voyage().
+        # select() with a physical-open fallback and read-back verification.
+        # COMError propagates untouched: it's the sold-out-popup signal the
+        # caller routes to _check_sold_out_after_voyage().
         gender_code = GENDER_MAP.get(passenger["gender"], passenger["gender"])
-        try:
-            combos[0].select(gender_code)
-        except _ctypes.COMError:
-            raise
-        except Exception as e:
-            logger.warning(f"Sex select failed ({e}), retrying once in 1s")
-            time.sleep(1)
-            personal.children(control_type="ComboBox")[0].select(gender_code)
+        self._select_combo_verified(
+            personal, 0, gender_code, "sex",
+            TicketErrorCode.PASSENGER_VALIDATION_ERROR,
+            propagate_comerror=True,
+        )
         time.sleep(0.2)
 
         # Contact Info (edit[0])
