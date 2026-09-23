@@ -446,19 +446,65 @@ class PrimeDriver:
         )
 
     def _open_combo_dropdown(self, combo, label: str, attempt: int):
-        """Drop a PRIME combo's list: click its 'Open' child button, else
-        Alt+Down (the button's access key) on its Edit child."""
+        """Drop a PRIME combo's list, trying progressively more generic ways.
+
+        PRIME's combos come in two Win32 shapes: editable (children: Edit +
+        Button 'Open' — Accom. Type Code) and drop-down-list (no Edit child —
+        Sex, observed Sept 23, 2026). Try, stopping as soon as items appear:
+        1. click the 'Open' child button, if present;
+        2. click the combo itself (opens a drop-down-list style combo);
+        3. Alt+Down, the combo's standard open access key.
+        Note: wrappers from children() have no child_window(); use children().
+        """
         try:
-            combo.child_window(title="Open", control_type="Button").click_input()
-            return
+            shape = [
+                f"{c.element_info.control_type}:'{c.window_text()}'"
+                for c in combo.children()
+            ]
+        except Exception as e:
+            shape = [f"<children() failed: {e}>"]
+        logger.info(f"{label.capitalize()} combo children: {shape}")
+
+        # 1. 'Open' child button
+        try:
+            open_btns = combo.children(title="Open", control_type="Button")
+        except Exception as e:
+            logger.warning(f"{label.capitalize()} combo button scan failed: {e}")
+            open_btns = []
+        if open_btns:
+            try:
+                open_btns[0].click_input()
+                time.sleep(0.4)
+                if self._find_dropdown_items(combo):
+                    return
+                logger.warning(
+                    f"{label.capitalize()} 'Open' button clicked but no items appeared "
+                    f"(attempt {attempt + 1})"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Could not click {label} 'Open' button (attempt {attempt + 1}): {e}"
+                )
+        else:
+            logger.info(f"{label.capitalize()} combo has no 'Open' child button")
+
+        # 2. Click the combo itself (drop-down-list style opens on click)
+        try:
+            combo.click_input()
+            time.sleep(0.4)
+            if self._find_dropdown_items(combo):
+                return
+            logger.warning(
+                f"{label.capitalize()} combo clicked but no items appeared "
+                f"(attempt {attempt + 1})"
+            )
         except Exception as e:
             logger.warning(
-                f"Could not click {label} 'Open' button (attempt {attempt + 1}): {e}"
-                f" — trying Alt+Down"
+                f"Click on {label} combo failed (attempt {attempt + 1}): {e}"
             )
+
+        # 3. Alt+Down — focus is on the combo after the click above
         try:
-            combo.children(control_type="Edit")[0].click_input()
-            time.sleep(0.2)
             send_keys("%{DOWN}")
         except Exception as e:
             logger.warning(
