@@ -303,16 +303,22 @@ class PrimeDriver:
         return ""
 
     def _read_combo_value(self, combo) -> str:
-        """Best-effort read of a PRIME combo's displayed value via its Edit child.
+        """Best-effort read of a PRIME combo's displayed value.
 
-        PRIME's Delphi combos expose an Edit child (the visible text) and a
-        Button 'Open' child (the dropdown arrow). Returns '' if unreadable.
+        PRIME's combos come in two shapes (Accessibility Insights, Sept 23,
+        2026): editable — children Edit + Button 'Open' (Accom. Type Code) —
+        and drop-down-list — children Text + Button 'Open' (Sex). Read the
+        Edit or Text child. Returns '' if unreadable.
         """
-        try:
-            edit = combo.children(control_type="Edit")[0]
-        except Exception:
-            return ""
-        return self._read_edit_value(edit)
+        for control_type in ("Edit", "Text"):
+            try:
+                child = combo.children(control_type=control_type)[0]
+            except Exception:
+                continue
+            value = self._read_edit_value(child)
+            if value:
+                return value
+        return ""
 
     def _select_combo_verified(self, pane, index: int, code: str, label: str,
                                absent_error: TicketErrorCode,
@@ -449,8 +455,9 @@ class PrimeDriver:
         """Drop a PRIME combo's list, trying progressively more generic ways.
 
         PRIME's combos come in two Win32 shapes: editable (children: Edit +
-        Button 'Open' — Accom. Type Code) and drop-down-list (no Edit child —
-        Sex, observed Sept 23, 2026). Try, stopping as soon as items appear:
+        Button 'Open' — Accom. Type Code) and drop-down-list (children: Text +
+        Button 'Open' — Sex, confirmed Sept 23, 2026). Try, stopping as soon
+        as items appear:
         1. click the 'Open' child button, if present;
         2. click the combo itself (opens a drop-down-list style combo);
         3. Alt+Down, the combo's standard open access key.
