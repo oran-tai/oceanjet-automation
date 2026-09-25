@@ -335,12 +335,9 @@ class PrimeDriver:
         the dropdown never visibly opens. The UIA Expand no-ops on the Delphi
         combo, so there are no list children to enumerate and pywinauto
         reports the item missing — PRIME never said TC was unavailable.
-        Fallbacks, in order: (1) type the code into the focused combo — a
-        drop-down-list combo (Sex) selects by incremental prefix search with
-        no UIA enumeration, verified strictly by read-back; (2) click the
-        combo's real 'Open' child button (or Alt+Down on its Edit child, the
-        button's access key) to drop the list, click the item, and verify by
-        reading the combo's Edit/Text child back.
+        Fallback: click the combo's real 'Open' child button (or Alt+Down on
+        its Edit child, the button's access key) to drop the list, click the
+        item, and verify by reading the combo's Edit child back.
 
         Error split: `absent_error` (booking-level) is raised only when a
         dropped list was actually enumerated and the code wasn't in it. A
@@ -361,20 +358,12 @@ class PrimeDriver:
         def combo():
             return pane.children(control_type="ComboBox")[index]
 
-        def verify(source: str, strict: bool = False) -> bool:
+        def verify(source: str) -> bool:
             actual = self._read_combo_value(combo())
             if actual.strip().upper() == code.upper():
                 logger.info(f"{label.capitalize()} '{code}' verified via {source}")
                 return True
             if not actual:
-                if strict:
-                    # Keystrokes report nothing back — an unreadable combo
-                    # is not evidence that they landed.
-                    logger.info(
-                        f"{label.capitalize()} combo text unreadable after {source}; "
-                        f"cannot confirm '{code}'"
-                    )
-                    return False
                 # Combo text not exposed — trust the action that reported success
                 logger.info(
                     f"{label.capitalize()} combo text unreadable after {source}; "
@@ -409,17 +398,7 @@ class PrimeDriver:
                 if attempt == 0:
                     time.sleep(1)
 
-        # --- Fallback 1: type the code into the focused combo ---
-        # A Win32 drop-down-list combo selects the first item matching typed
-        # text (incremental prefix search) without dropping the list, so this
-        # needs no UIA enumeration at all — the path that failed on Sept 25,
-        # 2026 (Sex list open, button reading 'Close', yet pywinauto saw no
-        # list child while Accessibility Insights did). Verification is
-        # strict: only a positive read-back counts.
-        if self._select_combo_by_typing(combo, code, label, verify):
-            return
-
-        # --- Fallback 2: physically open the dropdown ---
+        # --- Fallback: physically open the dropdown ---
         logger.warning(
             f"{label.capitalize()} select() did not land — opening dropdown physically"
         )
@@ -471,70 +450,6 @@ class PrimeDriver:
             f"{'items ' + str(seen_items) if seen_items else 'never opened'} "
             f"and selection did not verify",
         )
-
-    def _combo_is_dropped(self, combo) -> bool:
-        """True when the Win32 combo proxy reports its list as open.
-
-        The combo's child button is named 'Open' while the list is closed and
-        'Close' while it is dropped (observed Sept 25, 2026).
-        """
-        try:
-            return bool(combo.children(title="Close", control_type="Button"))
-        except Exception:
-            return False
-
-    def _select_combo_by_typing(self, combo_fn, code: str, label: str, verify) -> bool:
-        """Select a drop-down-list combo item by typing its text.
-
-        Applies only to drop-down-list combos (Text + Button children, e.g.
-        Sex). An editable combo (Edit child, e.g. Accom. Type Code) would take
-        the keystrokes as free text instead of picking an item, so it is
-        skipped here and left to the physical-open fallback.
-
-        Focus goes through set_focus() rather than a click, because clicking
-        a combo toggles its list. If the list is already dropped it is closed
-        with Escape first so the keystrokes act on the closed combo, where
-        the selection commits immediately. Enter is never sent: on a closed
-        combo it would fire the form's default button.
-
-        Returns True only when the read-back shows `code`.
-        """
-        try:
-            if combo_fn().children(control_type="Edit"):
-                logger.info(
-                    f"{label.capitalize()} combo is editable — skipping keyboard selection"
-                )
-                return False
-        except Exception as e:
-            logger.warning(f"{label.capitalize()} combo child scan failed: {e}")
-            return False
-
-        for attempt in range(2):
-            try:
-                combo = combo_fn()
-                if self._combo_is_dropped(combo):
-                    send_keys("{ESC}")
-                    time.sleep(0.3)
-                    combo = combo_fn()
-                combo.set_focus()
-                time.sleep(0.2)
-                send_keys(code)
-                time.sleep(0.4)
-            except Exception as e:
-                logger.warning(
-                    f"{label.capitalize()} keyboard selection attempt {attempt + 1} "
-                    f"failed ({e})"
-                )
-                time.sleep(0.5)
-                continue
-            if verify("keyboard", strict=True):
-                return True
-            logger.warning(
-                f"{label.capitalize()} keyboard selection attempt {attempt + 1} "
-                f"did not verify"
-            )
-            time.sleep(0.5)
-        return False
 
     def _open_combo_dropdown(self, combo, label: str, attempt: int):
         """Drop a PRIME combo's list, trying progressively more generic ways.
