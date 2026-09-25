@@ -1543,11 +1543,23 @@ class PrimeDriver:
         # COMError propagates untouched: it's the sold-out-popup signal the
         # caller routes to _check_sold_out_after_voyage().
         gender_code = GENDER_MAP.get(passenger["gender"], passenger["gender"])
-        self._select_combo_verified(
-            personal, 0, gender_code, "sex",
-            TicketErrorCode.PASSENGER_VALIDATION_ERROR,
-            propagate_comerror=True,
-        )
+        try:
+            self._select_combo_verified(
+                personal, 0, gender_code, "sex",
+                TicketErrorCode.PASSENGER_VALIDATION_ERROR,
+                propagate_comerror=True,
+            )
+        except PrimeError as select_error:
+            # Last resort, Sex only: type the code into the focused combo.
+            # Sept 25, 2026: the list was visibly dropped (button read
+            # 'Close') yet pywinauto enumerated no items, so both the
+            # select() and physical-open paths failed. A drop-down-list
+            # combo selects by typed prefix with no UIA enumeration.
+            logger.warning(
+                f"Sex select failed ({select_error}); trying keyboard fallback"
+            )
+            if not self._select_sex_by_typing(personal, gender_code):
+                raise select_error
         time.sleep(0.2)
 
         # Contact Info (edit[0])
@@ -1556,6 +1568,50 @@ class PrimeDriver:
             send_keys("^a")
             send_keys(contact_info, with_spaces=True)
             time.sleep(0.2)
+
+    def _select_sex_by_typing(self, personal, code: str) -> bool:
+        """Sex combo only: select M/F by typing the letter, verified by read-back.
+
+        The Sex combo is a Win32 drop-down-list (Text + Button children). With
+        focus on the closed combo, a typed letter selects the first matching
+        item immediately — no dropped list, no UIA enumeration. Focus goes
+        through set_focus() because a click would toggle the list; if the
+        list was left dropped by the earlier attempts, Escape closes it
+        first. Enter is never sent: on a closed combo it would fire the
+        form's default button.
+
+        Returns True only when the combo reads back `code`. An unreadable
+        combo counts as failure — keystrokes report nothing on their own.
+        """
+        def combo():
+            return personal.children(control_type="ComboBox")[0]
+
+        for attempt in range(2):
+            try:
+                c = combo()
+                if c.children(title="Close", control_type="Button"):
+                    send_keys("{ESC}")
+                    time.sleep(0.3)
+                    c = combo()
+                c.set_focus()
+                time.sleep(0.2)
+                send_keys(code)
+                time.sleep(0.4)
+                actual = self._read_combo_value(combo())
+            except Exception as e:
+                logger.warning(f"Sex keyboard attempt {attempt + 1} failed ({e})")
+                time.sleep(0.5)
+                continue
+            if actual.strip().upper() == code.upper():
+                logger.info(f"Sex '{code}' verified via keyboard")
+                return True
+            logger.warning(
+                f"Sex keyboard attempt {attempt + 1}: combo reads '{actual}', "
+                f"expected '{code}'"
+            )
+            time.sleep(0.5)
+        self._save_debug_screenshot("sex_keyboard_failed")
+        return False
 
     def click_issue(self):
         """Click the Issue button to submit the form."""
