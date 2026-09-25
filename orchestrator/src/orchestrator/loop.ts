@@ -2,13 +2,28 @@ import { existsSync, unlinkSync } from 'fs';
 import { resolve } from 'path';
 import type { BookawayClient } from '../bookaway/client.js';
 import type { OperatorModule } from '../operators/types.js';
+import type { BookingSummary } from '../bookaway/types.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { processBooking } from './processor.js';
 import { notifyPollCycleSummary } from '../notifications/slack.js';
 import { trackEvent } from '../events/bigquery.js';
+import { isDepartureWithinWindow } from '../utils/time.js';
 
 const STOP_FILE = resolve(process.cwd(), '.stop');
+
+/**
+ * Decide from the list response alone whether a booking is worth claiming.
+ * Returns a skip reason, or null to proceed. Saves a claim + details fetch +
+ * release round-trip per cycle for every booking we would skip anyway.
+ */
+export function preClaimSkipReason(booking: BookingSummary): string | null {
+  const departureDate = booking.misc?.departureDate;
+  if (departureDate && !isDepartureWithinWindow(departureDate)) {
+    return 'Departure date beyond 2-month window';
+  }
+  return null;
+}
 
 export async function startOrchestrator(
   client: BookawayClient,
@@ -62,7 +77,9 @@ export async function startOrchestrator(
       // Fetch pending bookings
       const bookings = await client.fetchPendingBookings();
 
-      // Filter: skip already claimed and already processed
+      // Filter: skip already claimed, already processed, and bookings we can
+      // rule out from the list response without claiming them
+      let preClaimSkipped = 0;
       const unclaimed = bookings.filter((b) => {
         // If targeting a specific booking, skip everything else
         if (config.targetBooking && b.reference !== config.targetBooking) {
@@ -89,13 +106,26 @@ export async function startOrchestrator(
           });
           return false;
         }
+        const skipReason = preClaimSkipReason(b);
+        if (skipReason) {
+          preClaimSkipped++;
+          logger.debug('Skipping booking before claim', {
+            reference: b.reference,
+            reason: skipReason,
+            departureDate: b.misc?.departureDate,
+          });
+          return false;
+        }
         return true;
       });
 
+      const skippedNote = preClaimSkipped > 0
+        ? ` (${preClaimSkipped} skipped before claim: departure beyond 2-month window)`
+        : '';
       if (unclaimed.length === 0) {
-        logger.info('No unclaimed bookings, waiting...');
+        logger.info(`No unclaimed bookings, waiting...${skippedNote}`);
       } else {
-        logger.info(`Found ${unclaimed.length} unclaimed bookings to process`);
+        logger.info(`Found ${unclaimed.length} unclaimed bookings to process${skippedNote}`);
       }
 
       // Process each unclaimed booking

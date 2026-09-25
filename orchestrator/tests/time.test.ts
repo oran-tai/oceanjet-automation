@@ -38,3 +38,33 @@ describe('to12Hour', () => {
     expect(to12Hour('15:30')).toBe('3:30 PM');
   });
 });
+
+import { isDepartureWithinWindow, parseBookawayDate } from '../src/utils/time.js';
+
+describe('parseBookawayDate', () => {
+  it('strips ordinal suffixes', () => {
+    const d = parseBookawayDate('Wed, Nov 25th 2026');
+    expect(d?.getFullYear()).toBe(2026);
+    expect(d?.getMonth()).toBe(10);
+    expect(d?.getDate()).toBe(25);
+  });
+  it('returns null for garbage', () => {
+    expect(parseBookawayDate('not a date')).toBeNull();
+  });
+});
+
+describe('isDepartureWithinWindow', () => {
+  const now = new Date('2026-09-24T20:15:00Z');
+  it('allows a departure inside two months', () => {
+    expect(isDepartureWithinWindow('Fri, Oct 2nd 2026', now)).toBe(true);
+  });
+  it('allows a departure on the cutoff day', () => {
+    expect(isDepartureWithinWindow('Tue, Nov 24th 2026', now)).toBe(true);
+  });
+  it('rejects a departure beyond two months', () => {
+    expect(isDepartureWithinWindow('Wed, Nov 25th 2026', now)).toBe(false);
+  });
+  it('allows unparseable dates through', () => {
+    expect(isDepartureWithinWindow('???', now)).toBe(true);
+  });
+});

@@ -16,3 +16,29 @@ export function to12Hour(time24: string): string {
 
   return `${hour}:${minute} ${period}`;
 }
+
+/** Days ahead PRIME allows a ticket to be issued for. */
+export const BOOKING_WINDOW_MONTHS = 2;
+
+/**
+ * Parse a Bookaway formatted date ("Wed, Apr 15th 2026") into a Date.
+ * Returns null when the string cannot be parsed.
+ */
+export function parseBookawayDate(dateStr: string): Date | null {
+  const cleaned = dateStr.replace(/(\d+)(st|nd|rd|th)/g, '$1');
+  const parsed = new Date(cleaned);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * True when the departure falls inside PRIME's booking window (now + 2 months).
+ * Unparseable dates are allowed through so a formatting change never silently
+ * hides bookings; the caller decides whether to log that.
+ */
+export function isDepartureWithinWindow(departureDateStr: string, now: Date = new Date()): boolean {
+  const departureDate = parseBookawayDate(departureDateStr);
+  if (!departureDate) return true;
+  const cutoff = new Date(now);
+  cutoff.setMonth(cutoff.getMonth() + BOOKING_WINDOW_MONTHS);
+  return departureDate <= cutoff;
+}

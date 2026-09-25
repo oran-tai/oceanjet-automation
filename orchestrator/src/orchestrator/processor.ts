@@ -4,6 +4,7 @@ import type { OperatorModule, TicketErrorCode, PassengerData } from '../operator
 import { SYSTEM_ERROR_CODES, TICKET_ERROR_LABELS } from '../operators/types.js';
 import { mapBookingToOceanJet } from '../operators/oceanjet/mapper.js';
 import { logger } from '../utils/logger.js';
+import { isDepartureWithinWindow as isWithinWindow, parseBookawayDate } from '../utils/time.js';
 import {
   notifyBookingFailure,
   notifySystemFailure,
@@ -60,25 +61,17 @@ function isDepartureWithinDays(departureDateStr: string, days: number): boolean 
 
 /**
  * Check if departure date is within PRIME's 2-month booking window.
+ * The loop already filters on the list response; this is the fallback for
+ * summaries that arrived without a departure date.
  */
 function isDepartureWithinWindow(departureDateStr: string): boolean {
-  // Bookaway format: "Wed, Apr 15th 2026"
-  // Strip ordinal suffixes (st, nd, rd, th) and parse
-  const cleaned = departureDateStr.replace(/(\d+)(st|nd|rd|th)/g, '$1');
-  const departureDate = new Date(cleaned);
-
-  if (isNaN(departureDate.getTime())) {
-    // If we can't parse, allow it through rather than blocking
+  if (!parseBookawayDate(departureDateStr)) {
     logger.warn('Could not parse departure date, allowing booking', {
       departureDateStr,
     });
     return true;
   }
-
-  const twoMonthsFromNow = new Date();
-  twoMonthsFromNow.setMonth(twoMonthsFromNow.getMonth() + 2);
-
-  return departureDate <= twoMonthsFromNow;
+  return isWithinWindow(departureDateStr);
 }
 
 /**

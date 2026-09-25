@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { withRetry } from '../utils/retry.js';
 import type {
   LoginResponse,
   BookingListResponse,
@@ -112,11 +113,26 @@ export class BookawayClient {
     );
   }
 
+  /**
+   * Release a claim. Retries transient failures (5xx, network) so a single
+   * gateway blip on a routine release never surfaces as a system error.
+   */
   async releaseBooking(bookingId: string): Promise<void> {
     logger.info('Releasing booking', { bookingId });
-    await this.client.put(
-      `/bookings/v2/bookings/${bookingId}/update-in-progress`,
-      { inProgressBy: null }
+    await withRetry(
+      () =>
+        this.client.put(
+          `/bookings/v2/bookings/${bookingId}/update-in-progress`,
+          { inProgressBy: null }
+        ),
+      {
+        retries: 2,
+        onRetry: (attempt, error: any) =>
+          logger.warn(`Release failed, retrying (${attempt}/2)`, {
+            bookingId,
+            error: error?.message,
+          }),
+      }
     );
   }
 

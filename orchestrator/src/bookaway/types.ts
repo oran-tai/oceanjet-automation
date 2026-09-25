@@ -24,6 +24,8 @@ export interface BookingSummary {
   status: string;
   inProgressBy: string | null;
   items: BookingItemSummary[];
+  /** Present on the list endpoint; lets the loop filter before claiming. */
+  misc?: Partial<BookingMisc>;
 }
 
 export interface BookingItemSummary {
