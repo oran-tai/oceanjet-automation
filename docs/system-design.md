@@ -64,10 +64,11 @@ oceanjet-automation/
 │   │   │   └── slack.ts         — Booking/system failure alerts
 │   │   ├── utils/
 │   │   │   ├── logger.ts        — Structured JSON logging, Bearer token redaction
-│   │   │   └── time.ts          — 24h→12h time conversion
+│   │   │   ├── retry.ts         — withRetry() for transient 5xx/network errors
+│   │   │   └── time.ts          — 24h→12h time conversion, Bookaway date parsing, 2-month window check
 │   │   ├── config.ts            — Env-based config, TARGET_BOOKING, BigQuery, Windows trim compat
 │   │   └── index.ts             — Entry point
-│   └── tests/                   — 49 unit tests (vitest)
+│   └── tests/                   — 66 unit tests (vitest)
 │
 ├── rpa-agent/                   # Python microservice
 │   ├── agent/
@@ -321,19 +322,20 @@ python-dotenv      # Environment variable loading
 
 For each poll cycle, the orchestrator:
 
-1. Fetches up to 500 pending bookings from Bookaway (sorted by departure date)
-2. Filters out already-claimed bookings, in-memory duplicates, booking error cooldown bookings, and TARGET_BOOKING mismatches
+1. Fetches up to 50 pending bookings from Bookaway (sorted by departure date, earliest first)
+2. Filters out already-claimed bookings, in-memory duplicates, booking error cooldown bookings, TARGET_BOOKING mismatches, and bookings whose list-level `misc.departureDate` is beyond PRIME's 2-month window (skipped before claiming — no claim/details/release round-trip)
 3. For each unclaimed booking:
    a. Claims it on Bookaway (`inProgressBy` = bot identifier)
    b. Fetches full booking details
    c. **Re-checks status is still `pending`** — skips if status changed (e.g., manually approved)
    d. Validates passengers (name, age, gender) pre-PRIME — fails with `PASSENGER_VALIDATION_ERROR` if invalid
-   e. Validates departure is within PRIME's 2-month booking window
+   e. Validates departure is within PRIME's 2-month booking window (fallback for summaries that arrived without a departure date)
    f. Translates to OceanJet PRIME format (mapper resolves station codes, accommodation, connecting routes, 24h→12h time)
    g. Sends to RPA agent via POST `localhost:8080/issue-tickets`
-   h. On success: approves on Bookaway (with 3x retry), then **random 30–90s pacing delay**
+   h. On success: approves on Bookaway (with 3x retry), then **random 90–180s pacing delay**
    i. On booking-level error: releases booking, sends Slack alert, adds to 24h cooldown cache, continues immediately (no delay)
    j. On system-level error: releases booking, sends Slack alert, **stops the loop**
+   k. Every release retries transient failures (5xx / network) 2x with 1s/2s backoff, so a single gateway blip on a routine release does not stop the loop
 4. If `TARGET_BOOKING` is set, stops after processing that booking
 5. Otherwise waits `pollingIntervalMs`, then repeats
 
@@ -343,7 +345,7 @@ Human-like throughput pacing to avoid detection:
 
 | Layer | Config | Default | When applied |
 |---|---|---|---|
-| Inter-booking (orchestrator) | `BOOKING_DELAY_MIN_MS` / `BOOKING_DELAY_MAX_MS` | 30000 / 90000 (30s–1.5 min) | After each **approved** booking only |
+| Inter-booking (orchestrator) | `BOOKING_DELAY_MIN_MS` / `BOOKING_DELAY_MAX_MS` | 90000 / 180000 (1.5–3 min) | After each **approved** booking only |
 | Inter-passenger (RPA agent) | `PASSENGER_DELAY_MIN_S` / `PASSENGER_DELAY_MAX_S` | 5 / 15 (5–15s) | Between ticket issuances within same booking |
 | Booking error cooldown (orchestrator) | `BOOKING_ERROR_COOLDOWN_MS` | 86400000 (24h) | After any booking-level error — silently skipped until cooldown expires. First occurrence sends alert + BQ event normally. In-memory, resets on restart. |
 
