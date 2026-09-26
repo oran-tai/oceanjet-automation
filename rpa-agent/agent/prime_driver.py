@@ -849,7 +849,9 @@ class PrimeDriver:
         via Gemini: error popup (dismiss), print preview (close). Refuses to
         dismiss a success popup — raises ORPHAN_TICKET_DETECTED with the
         ticket codes Gemini OCR'd so they aren't silently lost. Then retries
-        the verified select once.
+        the verified select once; if that still can't drive the list, types
+        the code into the combo's Edit child as a last resort
+        (_select_station_by_typing).
 
         Args:
             trip_details: Trip Details pane wrapper (combo re-bound per access).
@@ -923,14 +925,87 @@ class PrimeDriver:
 
         try:
             attempt()
-        except PrimeError:
-            raise
+        except PrimeError as retry_e:
+            if retry_e.error_code == TicketErrorCode.STATION_NOT_FOUND:
+                raise
+            # Last resort, stations only: type the code into the combo's
+            # Edit child. Sept 26, 2026 (origin 'TAG'): the list was visibly
+            # dropped (button read 'Close') yet pywinauto enumerated no
+            # items, so both select() and the physical open failed twice.
+            # The station combos are editable (Edit + Open), so a typed code
+            # lands without any UIA enumeration; the voyage search is a
+            # separate button click, so no combo event is relied upon.
+            logger.warning(
+                f"{role.capitalize()} station select failed after recovery "
+                f"({retry_e}); trying keyboard fallback"
+            )
+            if not self._select_station_by_typing(
+                trip_details, index, station_name, role
+            ):
+                raise retry_e
         except Exception as e:
             raise PrimeError(
                 TicketErrorCode.RPA_INTERNAL_ERROR,
                 f"{role.capitalize()} station select for '{station_name}' "
                 f"failed after blocker recovery: {e}",
             )
+
+    def _select_station_by_typing(self, trip_details, index: int, code: str,
+                                  role: str) -> bool:
+        """Station combos only: type the code into the Edit child, verified.
+
+        Origin/Destination are editable Win32 combos (children: Edit + Button
+        'Open'), the same shape an operator types a station code into by
+        hand. Click the Edit child (clicking the edit does not toggle the
+        list; only the arrow button does), select any existing text with
+        Home/Shift+End, type the code, and read the Edit back. If earlier
+        attempts left the list dropped (button reads 'Close'), Escape closes
+        it first so the keystrokes reach the edit. Enter and Tab are never
+        sent: Enter could fire the form's default button and Tab would move
+        focus with PRIME's exit-validation in tow.
+
+        Returns True only when the combo reads back `code`. An unreadable
+        combo counts as failure.
+        """
+        def combo():
+            return trip_details.children(control_type="ComboBox")[index]
+
+        for attempt in range(2):
+            try:
+                c = combo()
+                if c.children(title="Close", control_type="Button"):
+                    send_keys("{ESC}")
+                    time.sleep(0.3)
+                    c = combo()
+                edits = c.children(control_type="Edit")
+                if not edits:
+                    logger.warning(
+                        f"{role.capitalize()} combo has no Edit child; "
+                        f"keyboard fallback not applicable"
+                    )
+                    return False
+                edits[0].click_input()
+                time.sleep(0.2)
+                send_keys("{HOME}+{END}")
+                send_keys(code)
+                time.sleep(0.5)
+                actual = self._read_combo_value(combo())
+            except Exception as e:
+                logger.warning(
+                    f"{role.capitalize()} keyboard attempt {attempt + 1} failed ({e})"
+                )
+                time.sleep(0.5)
+                continue
+            if actual.strip().upper() == code.upper():
+                logger.info(f"{role.capitalize()} '{code}' verified via keyboard")
+                return True
+            logger.warning(
+                f"{role.capitalize()} keyboard attempt {attempt + 1}: combo reads "
+                f"'{actual}', expected '{code}'"
+            )
+            time.sleep(0.5)
+        self._save_debug_screenshot(f"{role}_keyboard_failed")
+        return False
 
     def fill_trip_details(self, leg, trip_type: str, return_leg=None,
                          connecting_arrival: str = None, voyage_only: bool = False) -> dict:
