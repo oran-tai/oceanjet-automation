@@ -248,25 +248,45 @@ class PrimeDriver:
 
         return None
 
-    def _dismiss_same_station_dialog(self):
-        """Dismiss the 'Origin and Destination must not be the same' error dialog.
+    def _find_same_station_dialog(self, timeout: float = 0.5):
+        """Return the child 'OCEAN FAST FERRIES' dialog if one is up, else None.
 
-        PRIME fires this dialog immediately when a combo box changes and
-        origin == destination (e.g., after Refresh retains the previous
-        values). We just click OK and continue — it's harmless.
+        The 'Origin and Destination must not be the same' popup is a child
+        dialog of the main window (test_station_typing_same_station_popup,
+        Sept 30, 2026). Any small child dialog matches; the caller decides
+        what to do with it.
         """
         try:
             dlg = self.main_window.child_window(
                 title_re=".*OCEAN FAST FERRIES.*", control_type="Window"
             )
-            if dlg.exists(timeout=0.5):
+            if dlg.exists(timeout=timeout):
+                return dlg
+        except Exception:
+            pass
+        return None
+
+    def _dismiss_same_station_dialog(self) -> bool:
+        """Dismiss the 'Origin and Destination must not be the same' error dialog.
+
+        PRIME fires this dialog immediately when a combo box changes and
+        origin == destination (e.g., after Refresh retains the previous
+        values). We just click OK and continue — it's harmless.
+
+        Returns True if a dialog was found and OK was clicked.
+        """
+        try:
+            dlg = self._find_same_station_dialog()
+            if dlg is not None:
                 ok_btn = dlg.child_window(title="OK", control_type="Button")
                 if ok_btn.exists(timeout=0.5):
                     logger.info("Dismissed 'Origin and Destination must not be the same' dialog")
                     ok_btn.click_input()
                     time.sleep(0.3)
+                    return True
         except Exception:
             pass  # No dialog — nothing to dismiss
+        return False
 
     def click_refresh(self):
         """Click the Refresh button to reset the form between passengers."""
@@ -964,6 +984,20 @@ class PrimeDriver:
         sent: Enter could fire the form's default button and Tab would move
         focus with PRIME's exit-validation in tow.
 
+        Two ways the same-station popup ('Origin and Destination must not be
+        the same') defeats plain typing (test_station_typing_same_station_popup,
+        Sept 30, 2026):
+        - Already up before we type: it is modal and eats every keystroke,
+          so the popup is dismissed before each attempt.
+        - Raised mid-word: PRIME's combo auto-completes on the first
+          keystroke to the first station with that letter ('S' -> SIQ),
+          validates on change, and if that equals the other station the
+          popup fires synchronously and eats the rest of the word. Retyping
+          always lands on the same first match, so instead the popup is
+          dismissed and the combo is stepped with Down/Up arrows from the
+          colliding item until it reads `code` (_step_station_combo_to).
+          Arrow keys set a real item selection, same as a list click.
+
         Returns True only when the combo reads back `code`. An unreadable
         combo counts as failure.
         """
@@ -972,6 +1006,12 @@ class PrimeDriver:
 
         for attempt in range(2):
             try:
+                if self._dismiss_same_station_dialog():
+                    logger.warning(
+                        f"{role.capitalize()} keyboard attempt {attempt + 1}: "
+                        f"same-station popup was up before typing; dismissed"
+                    )
+                    time.sleep(0.3)
                 c = combo()
                 if c.children(title="Close", control_type="Button"):
                     send_keys("{ESC}")
@@ -990,6 +1030,16 @@ class PrimeDriver:
                 send_keys(code)
                 time.sleep(0.5)
                 actual = self._read_combo_value(combo())
+                if (actual.strip().upper() != code.upper()
+                        and self._find_same_station_dialog(timeout=0.3) is not None):
+                    logger.warning(
+                        f"{role.capitalize()} typing '{code}': auto-complete landed on "
+                        f"'{actual}', which equals the other station, and PRIME raised "
+                        f"the same-station popup mid-word; stepping the list with arrows"
+                    )
+                    self._dismiss_same_station_dialog()
+                    time.sleep(0.3)
+                    actual = self._step_station_combo_to(combo, code, role)
             except Exception as e:
                 logger.warning(
                     f"{role.capitalize()} keyboard attempt {attempt + 1} failed ({e})"
@@ -1006,6 +1056,66 @@ class PrimeDriver:
             time.sleep(0.5)
         self._save_debug_screenshot(f"{role}_keyboard_failed")
         return False
+
+    # Arrow-walk bounds for _step_station_combo_to. PRIME's station list has
+    # ~18 known codes; Down covers the rest of the list from the colliding
+    # item, Up walks back past it to the top.
+    STATION_WALK_DOWN_STEPS = 12
+    STATION_WALK_UP_STEPS = 30
+
+    def _step_station_combo_to(self, combo, code: str, role: str) -> str:
+        """Step a closed station combo with arrow keys until it reads `code`.
+
+        Used only after an auto-complete collision left the combo on the
+        first station sharing `code`'s first letter. Each arrow press moves
+        the selection one item and fires PRIME's change validation, so a
+        step that passes back through the other station's value raises the
+        same-station popup again; it is dismissed and the walk continues.
+        Stops as soon as the read-back matches, or when a press no longer
+        changes the value (end of list) in both directions, or at the step
+        bounds. Never sends Enter.
+
+        Args:
+            combo: zero-arg callable returning a fresh ComboBox wrapper.
+            code: station code to reach.
+            role: "origin" or "destination" — used in log messages.
+
+        Returns the final combo read-back (caller compares against `code`).
+        """
+        def focus_edit():
+            edits = combo().children(control_type="Edit")
+            if edits:
+                edits[0].click_input()
+                time.sleep(0.2)
+
+        focus_edit()
+        actual = self._read_combo_value(combo())
+        for key, steps in (("{DOWN}", self.STATION_WALK_DOWN_STEPS),
+                           ("{UP}", self.STATION_WALK_UP_STEPS)):
+            for step in range(1, steps + 1):
+                before = actual
+                send_keys(key)
+                time.sleep(0.4)
+                if self._dismiss_same_station_dialog():
+                    focus_edit()
+                actual = self._read_combo_value(combo())
+                logger.info(
+                    f"{role.capitalize()} arrow walk {key} {step}: reads '{actual}'"
+                )
+                if actual.strip().upper() == code.upper():
+                    c = combo()
+                    if c.children(title="Close", control_type="Button"):
+                        send_keys("{ESC}")
+                        time.sleep(0.3)
+                        actual = self._read_combo_value(combo())
+                    return actual
+                if actual.strip().upper() == before.strip().upper():
+                    logger.info(
+                        f"{role.capitalize()} arrow walk {key}: value unchanged at "
+                        f"'{actual}', end of list in this direction"
+                    )
+                    break
+        return actual
 
     def fill_trip_details(self, leg, trip_type: str, return_leg=None,
                          connecting_arrival: str = None, voyage_only: bool = False) -> dict:
