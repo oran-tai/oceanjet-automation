@@ -861,17 +861,27 @@ class PrimeDriver:
                                       station_name: str, role: str):
         """Select a station combo, recovering from common form blockers.
 
-        Selection goes through _select_combo_verified (select() + physical
-        'Open' fallback + read-back). If the list was opened and enumerated
-        without the station, that's a genuine STATION_NOT_FOUND — raised
-        immediately. Any other failure (list never opened, value didn't
-        verify) usually means something is blocking the form, so classify it
-        via Gemini: error popup (dismiss), print preview (close). Refuses to
-        dismiss a success popup — raises ORPHAN_TICKET_DETECTED with the
-        ticket codes Gemini OCR'd so they aren't silently lost. Then retries
-        the verified select once; if that still can't drive the list, types
-        the code into the combo's Edit child as a last resort
-        (_select_station_by_typing).
+        Stations only, typing goes first (Sept 30, 2026): the station combos
+        are editable, auto-complete on the first keystroke and set a real
+        item selection, and the typed path is validated on the VM
+        (tests/test_station_typing_same_station_popup.py) while the list
+        path has failed to enumerate on every attempt since Sept 26 —
+        costing two list attempts, a Gemini classification and a retry per
+        station before the typed fallback landed. A verified typed select
+        returns immediately.
+
+        Otherwise the list path runs as before: _select_combo_verified
+        (select() + physical 'Open' fallback + read-back). If the list was
+        opened and enumerated without the station, that's a genuine
+        STATION_NOT_FOUND — raised immediately. Any other failure (list never
+        opened, value didn't verify) usually means something is blocking the
+        form, so classify it via Gemini: error popup (dismiss), print preview
+        (close). Refuses to dismiss a success popup — raises
+        ORPHAN_TICKET_DETECTED with the ticket codes Gemini OCR'd so they
+        aren't silently lost. Then retries the verified select once; if that
+        still can't drive the list, types the code once more as a last
+        resort (the blocker the classifier cleared may have been what
+        defeated the first typed attempt).
 
         Args:
             trip_details: Trip Details pane wrapper (combo re-bound per access).
@@ -884,6 +894,15 @@ class PrimeDriver:
                 trip_details, index, station_name, role,
                 TicketErrorCode.STATION_NOT_FOUND,
             )
+
+        if self._select_station_by_typing(
+            trip_details, index, station_name, role, debug_screenshot=False
+        ):
+            return
+        logger.warning(
+            f"{role.capitalize()} '{station_name}' did not land by typing; "
+            f"falling back to the list select"
+        )
 
         try:
             attempt()
@@ -971,7 +990,7 @@ class PrimeDriver:
             )
 
     def _select_station_by_typing(self, trip_details, index: int, code: str,
-                                  role: str) -> bool:
+                                  role: str, debug_screenshot: bool = True) -> bool:
         """Station combos only: type the code into the Edit child, verified.
 
         Origin/Destination are editable Win32 combos (children: Edit + Button
@@ -999,7 +1018,9 @@ class PrimeDriver:
           Arrow keys set a real item selection, same as a list click.
 
         Returns True only when the combo reads back `code`. An unreadable
-        combo counts as failure.
+        combo counts as failure. `debug_screenshot=False` skips the failure
+        screenshot (used for the first-attempt call, where the list path
+        still follows and takes its own).
         """
         def combo():
             return trip_details.children(control_type="ComboBox")[index]
@@ -1054,7 +1075,8 @@ class PrimeDriver:
                 f"'{actual}', expected '{code}'"
             )
             time.sleep(0.5)
-        self._save_debug_screenshot(f"{role}_keyboard_failed")
+        if debug_screenshot:
+            self._save_debug_screenshot(f"{role}_keyboard_failed")
         return False
 
     # Arrow-walk bounds for _step_station_combo_to. PRIME's station list has
