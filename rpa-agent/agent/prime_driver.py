@@ -1247,13 +1247,109 @@ class PrimeDriver:
         if not voyage_only:
             # 9. Select accommodation (combo_box[0]) — select() with a physical
             # 'Open'-button fallback and read-back verification
-            self._select_combo_verified(
-                trip_details, 0, leg["accommodation"], "accommodation",
-                TicketErrorCode.ACCOMMODATION_UNAVAILABLE,
-            )
+            try:
+                self._select_combo_verified(
+                    trip_details, 0, leg["accommodation"], "accommodation",
+                    TicketErrorCode.ACCOMMODATION_UNAVAILABLE,
+                )
+            except PrimeError as select_error:
+                if select_error.error_code == TicketErrorCode.ACCOMMODATION_UNAVAILABLE:
+                    raise  # list opened and enumerated — code genuinely absent
+                # Last resort, accommodation only: type the code's prefix into
+                # the combo's Edit child. Oct 6, 2026 (SIQ->TAG, 'OA'): the
+                # list was dropped (button read 'Close') yet pywinauto
+                # enumerated no items, so both select() and the physical open
+                # failed — the same symptom as Sex (Sept 25) and the station
+                # combos (Sept 26).
+                logger.warning(
+                    f"Accommodation select failed ({select_error}); "
+                    f"trying keyboard fallback"
+                )
+                if not self._select_accommodation_by_typing(
+                    trip_details, leg["accommodation"]
+                ):
+                    raise select_error
             time.sleep(0.3)
 
         return voyage_result
+
+    def _select_accommodation_by_typing(self, trip_details, code: str) -> bool:
+        """Accommodation combo only: type the code's prefix, verified by auto-complete.
+
+        Accom. Type Code is an editable Win32 combo (children: Edit + Button
+        'Open'), the same shape as the station combos, which auto-complete on
+        the first keystroke to the first list item with that prefix and set a
+        real item selection (validated on the VM Sept 30, 2026). Click the
+        Edit child (clicking the edit does not toggle the list; only the
+        arrow button does), select any existing text with Home/Shift+End,
+        and type the code minus its last character ('O' for 'OA'). If earlier
+        attempts left the list dropped (button reads 'Close'), Escape closes
+        it first so the keystrokes reach the edit. Enter and Tab are never
+        sent: Enter could fire the form's default button and Tab would move
+        focus with PRIME's exit-validation in tow.
+
+        Why the prefix and not the whole code: an editable combo keeps any
+        typed text, so a fully typed code reads back as itself whether or not
+        the voyage offers it. Stations have the voyage search as a backstop
+        for that; after accommodation the next PRIME check is Issue. With the
+        last character left untyped, the read-back equals `code` only when
+        PRIME's auto-complete supplied the rest from a real list item.
+
+        Returns True only when the combo reads back `code`. An unreadable
+        combo, a combo that keeps just the typed prefix (no item with that
+        prefix, or auto-complete inactive) and a different item sharing the
+        prefix all count as failure.
+        """
+        def combo():
+            return trip_details.children(control_type="ComboBox")[0]
+
+        prefix = code[:-1]
+        if not prefix:
+            logger.warning(
+                f"Accommodation code '{code}' is too short to verify by "
+                f"auto-complete; keyboard fallback not applicable"
+            )
+            return False
+
+        for attempt in range(2):
+            try:
+                c = combo()
+                if c.children(title="Close", control_type="Button"):
+                    send_keys("{ESC}")
+                    time.sleep(0.3)
+                    c = combo()
+                edits = c.children(control_type="Edit")
+                if not edits:
+                    logger.warning(
+                        "Accommodation combo has no Edit child; "
+                        "keyboard fallback not applicable"
+                    )
+                    return False
+                edits[0].click_input()
+                time.sleep(0.2)
+                send_keys("{HOME}+{END}")
+                send_keys(prefix)
+                time.sleep(0.5)
+                actual = self._read_combo_value(combo())
+            except Exception as e:
+                logger.warning(
+                    f"Accommodation keyboard attempt {attempt + 1} failed ({e})"
+                )
+                time.sleep(0.5)
+                continue
+            if actual.strip().upper() == code.upper():
+                logger.info(
+                    f"Accommodation '{code}' verified via keyboard "
+                    f"(typed '{prefix}', auto-complete supplied the rest)"
+                )
+                return True
+            logger.warning(
+                f"Accommodation keyboard attempt {attempt + 1}: typed '{prefix}', "
+                f"combo reads '{actual}', expected '{code}'"
+            )
+            time.sleep(0.5)
+        self._save_debug_screenshot("accommodation_keyboard_failed")
+        return False
 
     def _close_voyage_dialog(self, voyage_dlg):
         """Reliably close the Voyage Schedule dialog.
