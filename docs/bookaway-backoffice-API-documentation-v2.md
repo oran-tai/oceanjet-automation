@@ -192,6 +192,8 @@ Use the following paths to extract specific information from the response JSON. 
 > | `Dumaguete` | Dumaguete | DUM |
 > | `Maasin City, Leyte` | Maasin | MAA |
 > | `Surigao` | Surigao | SUR |
+>
+> Where one city name covers several ports, the station name at `items[0].trip.fromId.name` / `items[0].trip.toId.name` decides the code: city `Bohol` with a Jetafe station → GET; city `Siquijor` with station `Port of Lazi` (or `Lazi Port`) → LAZ.
 
 #### **B. Schedule**
 

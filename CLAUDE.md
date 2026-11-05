@@ -75,6 +75,7 @@ type C:\oceanjet-automation\orchestrator\.env
 - Bearer tokens are never logged
 - OceanJet supplier ID: `5c6147b2967ae90001ca6702`
 - Station codes, accommodation codes, connecting routes are in `orchestrator/src/operators/oceanjet/config.ts`
+- Cities with several ports are disambiguated by Bookaway station name in `resolveStationFromLocation`: "Bohol" + Jetafe → `GET`, "Siquijor" + "Port of Lazi" / "Lazi Port" → `LAZ`; everything else falls back to the city-name lookup
 - Booking types: one-way, round-trip, connecting route (detected automatically by mapper)
 - Far-out bookings (departure beyond PRIME's 2-month window) are filtered in the loop from the list response's `misc.departureDate` **before** claiming (`preClaimSkipReason` in `loop.ts`) — no claim/details/release round-trip per cycle. The processor's details-level check stays as fallback
 - `releaseBooking` retries transient failures (5xx / network) 2x with 1s/2s backoff inside the client, so a single gateway blip on a routine release is not a system error (Sept 24, 2026: one 502 on release stopped the orchestrator)

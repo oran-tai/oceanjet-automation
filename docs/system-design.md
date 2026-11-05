@@ -68,7 +68,7 @@ oceanjet-automation/
 │   │   │   └── time.ts          — 24h→12h time conversion, Bookaway date parsing, 2-month window check
 │   │   ├── config.ts            — Env-based config, TARGET_BOOKING, BigQuery, Windows trim compat
 │   │   └── index.ts             — Entry point
-│   └── tests/                   — 66 unit tests (vitest)
+│   └── tests/                   — 70 unit tests (vitest)
 │
 ├── rpa-agent/                   # Python microservice
 │   ├── agent/
@@ -356,7 +356,7 @@ Combined with ~1.5 min average processing time, this yields ~15 bookings/hour (~
 The mapper (`orchestrator/src/operators/oceanjet/mapper.ts`) handles:
 
 - **Booking type detection**: one-way, round-trip (via `misc.returnDepartureDate`), connecting (via route lookup), connecting-round-trip
-- **Station codes**: Bookaway city names → PRIME codes (some cities have multiple API names, e.g., "Bohol" and "Tagbilaran City, Bohol Island" both → TAG, "Calapan" and "Calapan, Mindoro Island" → CAL)
+- **Station codes**: Bookaway city names → PRIME codes (some cities have multiple API names, e.g., "Bohol" and "Tagbilaran City, Bohol Island" both → TAG, "Calapan" and "Calapan, Mindoro Island" → CAL). Where one city name covers several ports, the station name (`trip.fromId.name` / `trip.toId.name`) decides: "Bohol" + Jetafe → GET, "Siquijor" + "Port of Lazi" / "Lazi Port" → LAZ
 - **Accommodation**: `product.lineClass` ("Tourist" → TC, "Business" → BC, "Open Air" → OA)
 - **Connecting routes**: 6 routes through TAG and MAA hubs, with hardcoded departure times per leg
 - **Passengers**: name from direct fields, age/gender from `extraInfos` by definition ID

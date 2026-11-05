@@ -8,7 +8,7 @@
 
 ### Phase 1 TypeScript Orchestrator — Complete
 
-The full orchestrator is implemented, compiles cleanly, and has been verified against the live Bookaway API. 66 unit tests passing. 10/10 real bookings successfully mapped end-to-end.
+The full orchestrator is implemented, compiles cleanly, and has been verified against the live Bookaway API. 70 unit tests passing. 10/10 real bookings successfully mapped end-to-end.
 
 #### Core Components
 
@@ -16,7 +16,7 @@ The full orchestrator is implemented, compiles cleanly, and has been verified ag
 | --- | --- | --- |
 | **Configuration** | `orchestrator/src/config.ts`, `.env.example` | Done — TARGET_BOOKING support, env var trimming for Windows compatibility, BigQuery config |
 | **Bookaway API Client** | `orchestrator/src/bookaway/client.ts`, `types.ts` | Done — login, fetch bookings (limit 50, sorted by departure date), fetch details, claim/release, approve. Auto token refresh on 401. Release retries transient failures (5xx / network) 2x with 1s/2s backoff so a gateway blip on a routine release is not a system error. |
-| **OceanJet Data Mapper** | `orchestrator/src/operators/oceanjet/mapper.ts`, `config.ts` | Done — station codes (8 confirmed from live API + 12 from reference sheet), accommodation codes, connecting route detection (6 routes), passenger extraction from extraInfos, contactInfo from first passenger. |
+| **OceanJet Data Mapper** | `orchestrator/src/operators/oceanjet/mapper.ts`, `config.ts` | Done — station codes (8 confirmed from live API + 12 from reference sheet; shared city names resolved by station name — Bohol → GET for Jetafe, Siquijor → LAZ for Port of Lazi / Lazi Port), accommodation codes, connecting route detection (6 routes), passenger extraction from extraInfos, contactInfo from first passenger. |
 | **Booking Processor** | `orchestrator/src/orchestrator/processor.ts` | Done — handles all 4 booking types, status re-check after fetch (skips non-pending), passenger validation (pre-PRIME), departure window validation, conditional TRIP_NOT_FOUND alerting (≤7 days only), approval with 3x retry, structured error code routing (14 error codes: 8 booking-level → release + continue, 6 system-level → release + stop). |
 | **Orchestrator Loop** | `orchestrator/src/orchestrator/loop.ts`, `src/index.ts` | Done — continuous polling, claim-before-process, TARGET_BOOKING filter, in-memory duplicate detection, 24h booking error cooldown (all booking-level errors), pre-claim skip of bookings whose list-level `misc.departureDate` is beyond the 2-month window (`preClaimSkipReason`, no claim/details/release round-trip), graceful stop via `.stop` file, graceful shutdown on SIGINT/SIGTERM. |
 | **Slack Notifications** | `orchestrator/src/notifications/slack.ts` | Done — booking failure, system failure, partial failure, session expired alerts. Dual webhook (booking alerts → both, system alerts → primary only). Each webhook retries 3x with backoff. |
@@ -33,11 +33,11 @@ The full orchestrator is implemented, compiles cleanly, and has been verified ag
 | --- | --- | --- |
 | `tests/time.test.ts` | 15 | Time conversion: noon, midnight, AM, PM, edge cases; Bookaway date parsing; 2-month window (inside, cutoff day, beyond, unparseable) |
 | `tests/config.test.ts` | 21 | Station codes (including real API city names), accommodation codes, connecting routes |
-| `tests/mapper.test.ts` | 11 | All booking types, multi-passenger, real API city names, error cases |
+| `tests/mapper.test.ts` | 15 | All booking types, multi-passenger, real API city names, station-name disambiguation (Jetafe → GET, Lazi → LAZ), error cases |
 | `tests/processor.test.ts` | 8 | Success flow, booking-level failure (TRIP_SOLD_OUT), system-level RPA error (PRIME_CRASH), UNKNOWN_ERROR fallback, thrown system error, departure window skip, non-pending status skip, passenger validation error |
 | `tests/retry.test.ts` | 8 | Transient-error predicate (5xx, network, 4xx, plain Error); withRetry success, retry-then-succeed, budget exhausted, no retry on 4xx |
 | `tests/loop.test.ts` | 3 | Pre-claim skip: far-out departure skipped, near-term passes, missing date passes through |
-| **Total** | **66** | All passing |
+| **Total** | **70** | All passing |
 
 #### Documentation
 
@@ -205,7 +205,7 @@ To process a single booking, set `TARGET_BOOKING=BW1234567` in `orchestrator/.en
 ```bash
 cd orchestrator
 npm install
-npm test          # Run 66 unit tests
+npm test          # Run 70 unit tests
 npm run dev       # Run with mock operator
 ```
 

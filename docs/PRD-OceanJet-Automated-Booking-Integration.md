@@ -85,7 +85,7 @@ The system must extract passenger details, route, schedule, and class informatio
 - Given a departure time of "13:00" in 24-hour format, then the system converts it to "1:00 PM" for PRIME selection.
 - Given a Bookaway vehicle class of "Tourist Class", then the system maps it to accommodation type code `TC`. Same for "Business Class" → `BC` and "Open-Air" → `OA`.
 - Given a booking with multiple passengers, then the system extracts first name, last name, age, and gender for each passenger from the `items[0].passengers` array.
-- The full station code lookup table must cover all 18 unique PRIME codes (TAG, CEB, BAC, BAT, CAL, CAM, DUM, EST, GET, ILI, ILO, SIQ, ORM, PLA, TUB, MAA, SUR, PAL). Note: SIQ maps to both "Siquijor" and "Larena, Siquijor" on the Bookaway side.
+- The full station code lookup table must cover all 19 unique PRIME codes (TAG, CEB, BAC, BAT, CAL, CAM, DUM, EST, GET, ILI, ILO, SIQ, LAZ, ORM, PLA, TUB, MAA, SUR, PAL). Note: SIQ maps to both "Siquijor" and "Larena, Siquijor" on the Bookaway side. LAZ shares the city name "Siquijor" and is resolved from the station name ("Port of Lazi" or "Lazi Port").
 
 #### 5.3 PRIME Desktop Automation via RPA
 The system must automate the OceanJet PRIME desktop application to issue tickets. PRIME runs on a Windows VM, and the automation will use traditional RPA (e.g., UiPath, Power Automate, or similar) running on that VM to interact with the application through UI element selectors and simulated input.
