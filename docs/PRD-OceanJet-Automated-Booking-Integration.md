@@ -333,6 +333,7 @@ The "last mile" that actually issues tickets on the operator's system. For Ocean
 | Ormoc, Leyte | ORM |
 | Plaridel | PLA |
 | Siquijor | SIQ |
+| Siquijor (station name "Port of Lazi" or "Lazi Port") | LAZ |
 | Tubigon | TUB |
 | Maasin | MAA |
 | Maasin City, Leyte | MAA |

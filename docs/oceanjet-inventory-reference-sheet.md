@@ -20,6 +20,7 @@ Use this reference sheet to understand OceanJet's inventory and how it's mapped 
 | Iligan                  | `ILI`                 |
 | Iloilo                  | `ILO`                 |
 | Larena, Siquijor        | `SIQ`                 |
+| Siquijor / Port of Lazi (Lazi Port) | `LAZ`     |
 | Ormoc                   | `ORM`                 |
 | Plaridel                | `PLA`                 |
 | Siquijor                | `SIQ`                 |

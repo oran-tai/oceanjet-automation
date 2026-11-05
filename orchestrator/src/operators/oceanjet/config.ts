@@ -30,6 +30,8 @@ export const STATION_CODES: Record<string, string> = {
   'iloilo, panay island': 'ILO',
   'larena': 'SIQ',
   'larena, siquijor': 'SIQ',
+  'lazi': 'LAZ',
+  'lazi, siquijor': 'LAZ',
   'ormoc': 'ORM',
   'ormoc, leyte': 'ORM',
   'plaridel': 'PLA',
@@ -125,6 +127,13 @@ export function resolveStationFromLocation(location: {
   // the city name "Bohol". Disambiguate by station name before falling back.
   if (city === 'bohol' && /jetafe|getafe/.test(stationName)) {
     return 'GET';
+  }
+
+  // Siquijor has two OceanJet ports (Siquijor, Lazi) sharing the city name
+  // "Siquijor". Bookaway names the Lazi station "Port of Lazi" (confirmed
+  // from BW6039072, Nov 2026) or "Lazi Port"; both match on the word "lazi".
+  if (city === 'siquijor' && /\blazi\b/.test(stationName)) {
+    return 'LAZ';
   }
 
   return resolveStationCode(location.city.name);

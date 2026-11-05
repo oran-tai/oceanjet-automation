@@ -173,6 +173,50 @@ describe('mapBookingToOceanJet', () => {
     expect(result.departureLeg.destination).toBe('TAG');
   });
 
+  it('resolves Siquijor to LAZ when the port name is Port of Lazi', () => {
+    const booking = makeBooking({
+      originCity: 'Tagbilaran City, Bohol Island',
+      originStationName: 'Tagbilaran Ferry Terminal',
+      destinationCity: 'Siquijor',
+      destinationStationName: 'Port of Lazi',
+    });
+    const result = mapBookingToOceanJet(booking);
+    expect(result.bookingType).toBe('one-way');
+    expect(result.departureLeg.origin).toBe('TAG');
+    expect(result.departureLeg.destination).toBe('LAZ');
+  });
+
+  it('resolves Siquijor to LAZ when the port name is Lazi Port', () => {
+    const booking = makeBooking({
+      originCity: 'Tagbilaran City, Bohol Island',
+      destinationCity: 'Siquijor',
+      destinationStationName: 'Lazi Port',
+    });
+    const result = mapBookingToOceanJet(booking);
+    expect(result.departureLeg.destination).toBe('LAZ');
+  });
+
+  it('resolves Siquijor to LAZ as the origin (Lazi to Tagbilaran)', () => {
+    const booking = makeBooking({
+      originCity: 'Siquijor',
+      originStationName: 'Port of Lazi',
+      destinationCity: 'Tagbilaran City, Bohol Island',
+    });
+    const result = mapBookingToOceanJet(booking);
+    expect(result.departureLeg.origin).toBe('LAZ');
+    expect(result.departureLeg.destination).toBe('TAG');
+  });
+
+  it('resolves Siquijor to SIQ when the port name is not Lazi', () => {
+    const booking = makeBooking({
+      originCity: 'Tagbilaran City, Bohol Island',
+      destinationCity: 'Siquijor',
+      destinationStationName: 'Siquijor Port',
+    });
+    const result = mapBookingToOceanJet(booking);
+    expect(result.departureLeg.destination).toBe('SIQ');
+  });
+
   it('maps real API city names', () => {
     const booking = makeBooking({
       originCity: 'Tagbilaran City, Bohol Island',
