@@ -36,6 +36,14 @@ class LegData(BaseModel):
     accommodation: str
 
 
+class PriceCheckData(BaseModel):
+    """Bookaway-derived expectation for PRIME's Rates pane (PHP, per passenger)."""
+    bookawayCostPerPax: float
+    expectedTotalDuePerPax: float
+    currency: str = "PHP"
+    discountRate: float = 0.05
+
+
 class TranslatedBooking(BaseModel):
     bookingId: str
     reference: str
@@ -46,6 +54,9 @@ class TranslatedBooking(BaseModel):
     connectingLegs: Optional[list[LegData]] = None
     connectingReturnLegs: Optional[list[LegData]] = None
     contactInfo: Optional[str] = ""
+    # Absent when the orchestrator predates the price check: the driver
+    # then logs a warning and issues without comparing prices.
+    priceCheck: Optional[PriceCheckData] = None
 
 
 class PartialResult(BaseModel):

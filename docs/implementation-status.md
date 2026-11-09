@@ -108,7 +108,7 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
 - Dialog text reading via Gemini Vision screenshot (Delphi paints text directly, not accessible via UIA)
 - Print preview auto-close after each ticket issuance (loops only for expected count: 1 for one-way, 2 for round-trip)
 - Handles all 4 booking types (one-way, round-trip, connecting-one-way, connecting-round-trip)
-- Error detection: 13 of 14 error codes implemented (including `ORPHAN_TICKET_DETECTED` for late-arriving success popups and `UNEXPECTED_POPUP` for popups blocking the form; `SESSION_EXPIRED` detection remaining)
+- Error detection: 15 of 16 error codes implemented (including `ORPHAN_TICKET_DETECTED` for late-arriving success popups, `UNEXPECTED_POPUP` for popups blocking the form, and `PRICE_MISMATCH` / `PRICE_UNREADABLE` for the Bookaway-vs-PRIME price check; `SESSION_EXPIRED` detection remaining)
 - Critical safety: failed ticket capture after Confirm → RPA_INTERNAL_ERROR (system-level stop). Late-arriving success popups → `ORPHAN_TICKET_DETECTED` with codes + pax name preserved (May 5, 2026)
 - All errors (booking + system) stop processing remaining passengers, with popup cleanup before breaking to prevent cascading failures
 - TARGET_BOOKING mode: process a single booking by reference, then stop
@@ -130,9 +130,10 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
   - **Post-Confirm hardening** (May 5–6, 2026): added `ORPHAN_TICKET_DETECTED` system error for late-arriving success popups; replaced free-form result-dialog OCR with structured `_read_post_confirm_popup()` (POPUP/TEXT/CODES/FIRST_NAME/LAST_NAME); 6-attempt × 30s OCR retry budget (~3min); per-call Gemini timeout (60s, 3 retries → ~186s worst case) to prevent stale screenshots from stuck calls; `_dismiss_error_popup()` now classifies via Gemini before pressing Enter and refuses to dismiss success popups; debug screenshots auto-saved to `debug/post_confirm_no_popup_*.png` whenever OCR returns no popup
   - **Late-bind UIA handles** (May 4, 2026): return-leg search button is re-fetched immediately before clicking instead of using a stale handle from earlier in `fill_trip_details` — survives PRIME pane redraws after departure voyage commit
   - **Stale date-field guard** (June 25, 2026): production incident BW5276308 booked 13 Jul instead of 25 Jun — Refresh doesn't clear PRIME's date field, the masked-edit date write silently dropped, and voyage matching was time-only. Fixed twice over: `_type_date_field()` types then reads the field back (3 attempts) and refuses a positively-wrong value; `select_voyage(expected_date=...)` compares the selected grid row's date to the requested departure and raises `VOYAGE_TIME_MISMATCH` on mismatch. New `date_utils` helpers + regression tests in `tests/test_date_utils.py`; verified live on the VM via standalone `test_date_guard.py` (readback/happy/guard modes)
+  - **Price check before Yes** (Nov 9, 2026): the orchestrator derives `priceCheck` from Bookaway's per-passenger supplier cost (`items[].pricePerPassenger[0].costInSupplierCurrency`, PHP, summed across items) — PRIME must show Total Due = cost / 0.95 because the 5% OceanJet agreement discount is settled monthly off-system. The RPA reads the Rates pane with the Confirm popup open (the numbers are non-windowed Delphi labels, invisible to UIA/Win32, so `_read_rates_pane()` crops the pane and OCRs it with Gemini), compares on the first passenger only (connecting routes: leg 1 must stay below the total, legs must sum to it), and clicks **No** on mismatch → `PRICE_MISMATCH` (booking-level) or on an unreadable pane → `PRICE_UNREADABLE` (system-level). Kill switch `PRICE_CHECK_ENABLED=false`; rate `SUPPLIER_DISCOUNT_RATE=0.05`. A passenger whose later leg fails but already holds tickets now counts as a partial failure (booking stays claimed). Unit tests: `tests/test_price_check.py` (RPA), mapper/processor tests (orchestrator). Standalone VM test: `tests/test_error_price_mismatch.py`; probes: `tests/probe_rates_pane_readability.py`, `tests/probe_rates_pane_gemini.py`
   - **Date-fill blocker check** (July 3, 2026): added `UNEXPECTED_POPUP` system error — when the date field fails 3 fill + read-back attempts (usual cause: a modal popup like 'Session ID is missing' eating keystrokes after a session break), `_type_date_field` clicks Refresh, classifies the screen via `_classify_form_blocker()`, and raises `UNEXPECTED_POPUP` (popup found) / `ORPHAN_TICKET_DETECTED` (success popup) / `PRIME_VALIDATION_ERROR` (clean screen). The continue-on-unreadable fallback was removed — an unverified date is always terminal. Standalone test: `tests/test_error_unexpected_popup.py`
 
-**Error Code Status (14 total):**
+**Error Code Status (16 total):**
 
 | Error Code | Type | Implemented? | Tested? | Slack Alert? | How it's triggered | Orchestrator behavior |
 |---|---|---|---|---|---|---|
@@ -143,15 +144,17 @@ The RPA agent is implemented in `rpa-agent/` and deployed on the Windows VM. Ful
 | `PASSENGER_VALIDATION_ERROR` | Booking | Yes | **Unit test** | Always | Missing/invalid name, age, or gender | Release booking, continue loop (pre-PRIME) |
 | `TRIP_SOLD_OUT` | Booking | Yes | **VM passed** | Always | Voyage exists but no seats available — detected via COMError when popup blocks form, Gemini Vision reads popup text + Trip Availability seat counts (TC/OA/BC) | Release booking, continue loop |
 | `PRIME_VALIDATION_ERROR` | Booking | Yes | — | Always | PRIME rejects form on Issue click; also date fill fails 3 read-back attempts with a clean screen (blocker classifier finds no popup) | Release booking, stop loop |
+| `PRICE_MISMATCH` | Booking | Yes | **Unit test** (VM test pending) | Always | Rates pane Total Due × 0.95 ≠ Bookaway per-pax supplier cost on the first passenger (Confirm answered **No**, no ticket); also raised pre-PRIME when Bookaway carries no PHP cost | Release booking, continue loop |
 | `PRIME_TIMEOUT` | System | Yes | — | Always | Dialog doesn't appear in time | **Stop loop**, alert operator |
 | `PRIME_CRASH` | System | Yes | — | Always | Can't connect to PRIME process, or window lost mid-booking (after reconnect retry fails) | **Stop loop**, alert operator |
 | `SESSION_EXPIRED` | System | No | — | Always | PRIME login session timed out | **Stop loop**, alert operator |
 | `RPA_INTERNAL_ERROR` | System | Yes | — | Always | Screenshot/API/internal failure, failed ticket capture | **Stop loop**, alert operator |
 | `ORPHAN_TICKET_DETECTED` | System | Yes | — | Always | Late-arriving success popup found by cleanup, station-select recovery, or date-fill blocker check — Gemini reads codes + pax First/Last Name from the form behind the popup. Codes preserved in Slack alert for manual reconciliation. | **Stop loop**, alert operator |
 | `UNEXPECTED_POPUP` | System | Yes | — | Always | Date fill fails 3 read-back attempts and the blocker classifier finds a popup / print preview blocking the form (e.g. 'Session ID is missing' after a session break) — popup text included in the alert | **Stop loop**, engineer must fix (e.g. re-login) |
+| `PRICE_UNREADABLE` | System | Yes | **Unit test** | Always | Gemini could not read Total Due from the Rates pane in 2 fresh screenshots (Confirm answered **No**, no ticket) | **Stop loop**, engineer must fix |
 | `UNKNOWN_ERROR` | Catch-all | Yes | — | Always | Unexpected unhandled exception | **Stop loop**, alert operator |
 
-**Score:** 13/14 implemented, 6/14 tested (5 VM + 1 unit test).
+**Score:** 15/16 implemented, 8/16 tested (5 VM + 3 unit test).
 
 **Not yet implemented:** `SESSION_EXPIRED` (requires PRIME session timeout detection).
 

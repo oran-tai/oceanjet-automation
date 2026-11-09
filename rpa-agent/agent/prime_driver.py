@@ -24,6 +24,7 @@ from agent.date_utils import (
     grid_datetime_to_mmddyy,
 )
 from agent.error_codes import TicketErrorCode, PrimeError, SYSTEM_ERROR_CODES
+from agent.price_check import RATES_PROMPT, parse_rates_response, evaluate_leg
 
 logger = logging.getLogger("rpa-agent")
 
@@ -1931,8 +1932,13 @@ class PrimeDriver:
                 f"Failed to click Issue button: {e}",
             )
 
-    def handle_issue_result(self) -> list[str]:
+    def handle_issue_result(self, price_check: dict | None = None) -> list[str]:
         """Handle dialogs after clicking Issue and return ticket number(s).
+
+        Args:
+            price_check: When set (first passenger of a booking), the Rates
+                pane is OCR'd while the Confirm popup is up and compared with
+                Bookaway before Yes is clicked — see _verify_price_on_confirm.
 
         The Issue flow has two possible paths:
         1. Confirmation dialog ("Confirm" / "Continue issuing ticket?") → Yes
@@ -1985,9 +1991,141 @@ class PrimeDriver:
         dialog_title = dialog.window_text()
 
         if dialog_title == "Confirm":
+            if price_check:
+                # Raises PRICE_MISMATCH / PRICE_UNREADABLE after clicking No.
+                self._last_verified_total_due = self._verify_price_on_confirm(
+                    dialog, price_check
+                )
             return self._handle_confirm_dialog(dialog, desktop)
         else:
             return self._handle_error_dialog(dialog)
+
+    def _read_rates_pane(self, label: str) -> dict:
+        """OCR PRIME's Rates pane (Fare / Discount / Terminal Fee / Total Due).
+
+        The numbers are non-windowed Delphi labels — invisible to UIA,
+        LegacyIAccessible and Win32 (probed Nov 9, 2026 before Issue, with the
+        Confirm popup open, and after closing it) — so this crops the pane out
+        of a screenshot, upscales it 2x and asks Gemini for the six fields in a
+        strict format. PRIME fills the pane only when Issue is clicked, i.e. at
+        the same moment the Confirm popup appears, so call this with the popup
+        up. Each crop is saved under debug/rates_<label>_<ts>.png for finance
+        audits and misread diagnosis.
+
+        Returns parse_rates_response()'s dict; total_due is None when the pane
+        could not be captured or Gemini failed.
+        """
+        from PIL import Image, ImageGrab
+
+        empty = parse_rates_response("")
+        try:
+            pane = self.main_window.child_window(
+                title_re=" *Rates *", control_type="Pane"
+            )
+            r = pane.rectangle()
+            shot = ImageGrab.grab()
+            margin = 6
+            crop = shot.crop((
+                max(0, r.left - margin), max(0, r.top - margin),
+                min(shot.width, r.right + margin), min(shot.height, r.bottom + margin),
+            ))
+            crop = crop.resize((crop.width * 2, crop.height * 2), Image.LANCZOS)
+        except Exception as e:
+            logger.error(f"Rates pane capture failed: {e}")
+            return empty
+
+        try:
+            from datetime import datetime
+            from pathlib import Path
+            debug_dir = Path("debug")
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", label)[:60]
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            crop.save(debug_dir / f"rates_{safe}_{ts}.png", format="PNG")
+        except Exception as e:
+            logger.debug(f"Failed to save Rates crop: {e}")
+
+        buf = io.BytesIO()
+        crop.save(buf, format="PNG")
+        try:
+            raw = self._call_gemini(RATES_PROMPT, buf.getvalue())
+        except Exception as e:
+            logger.error(f"Gemini call failed for Rates pane: {e}")
+            return empty
+        parsed = parse_rates_response(raw)
+        logger.info(
+            f"Rates pane OCR: accom={parsed['accom']!r} trip={parsed['trip']!r} "
+            f"fare={parsed['fare']} discount={parsed['discount']} "
+            f"terminal_fee={parsed['terminal_fee']} total_due={parsed['total_due']}"
+        )
+        return parsed
+
+    def _decline_confirm(self, confirm_dlg):
+        """Click No on the Confirm popup (never Yes) so no ticket is issued."""
+        logger.warning("Declining Confirm popup → clicking No (no ticket issued)")
+        try:
+            confirm_dlg.child_window(title="No", control_type="Button").click_input()
+        except Exception as e:
+            logger.warning(f"No button click failed ({e}); pressing Escape")
+            send_keys("{ESC}")
+        time.sleep(1)
+        try:
+            if confirm_dlg.exists(timeout=0.5):
+                logger.error("Confirm popup still open after No; cleanup will dismiss it")
+        except Exception:
+            pass
+
+    def _verify_price_on_confirm(self, confirm_dlg, pc: dict) -> float:
+        """Compare PRIME's Total Due with Bookaway while the Confirm popup is up.
+
+        pc keys: expected_total (PRIME Total Due the whole passenger must add
+        up to = Bookaway cost / (1 - discount)), bookaway_cost, prior_total
+        (Total Due accepted on earlier legs of this passenger), is_last_leg,
+        label, reference, issued_tickets (this passenger's earlier legs).
+
+        Match → returns this issue's Total Due and the caller clicks Yes.
+        Mismatch → clicks No, raises PRICE_MISMATCH (booking-level).
+        Unreadable after 2 fresh reads → clicks No, raises PRICE_UNREADABLE
+        (system-level: a Rates pane we cannot read means no finance guard).
+        """
+        expected = pc["expected_total"]
+        reading = parse_rates_response("")
+        for attempt in range(1, 3):
+            reading = self._read_rates_pane(f"{pc.get('reference', 'booking')}_{pc['label']}")
+            if reading["total_due"] is not None:
+                break
+            logger.warning(f"Rates pane read attempt {attempt}/2 returned no Total Due")
+            time.sleep(2)
+
+        verdict, detail = evaluate_leg(
+            reading["total_due"], expected, pc["prior_total"], pc["is_last_leg"]
+        )
+        ctx = (
+            f"Bookaway cost {pc['bookaway_cost']:,.2f} PHP/pax, expected PRIME total "
+            f"{expected:,.2f}; Rates pane read accom={reading['accom'] or '?'} "
+            f"trip={reading['trip'] or '?'} fare={reading['fare']} "
+            f"total_due={reading['total_due']}"
+        )
+        if verdict == "match":
+            logger.info(f"Price check OK for {pc['label']}: {detail} ({ctx})")
+            return reading["total_due"]
+
+        self._decline_confirm(confirm_dlg)
+        issued = pc.get("issued_tickets") or []
+        suffix = (
+            f" Earlier legs of this passenger were already issued: {issued} — "
+            f"reconcile manually."
+            if issued else ""
+        )
+        if verdict == "unreadable":
+            raise PrimeError(
+                TicketErrorCode.PRICE_UNREADABLE,
+                f"{detail} ({ctx}). Ticket NOT issued for {pc['label']}.{suffix}",
+            )
+        raise PrimeError(
+            TicketErrorCode.PRICE_MISMATCH,
+            f"{detail} ({ctx}). Ticket NOT issued for {pc['label']}.{suffix}",
+        )
 
     def _scan_for_result_popup(self, desktop, timeout_sec: int):
         """Poll for the small post-Issue result popup window.
@@ -2361,6 +2499,24 @@ class PrimeDriver:
         last_error_msg = None
         last_arrival_time = None  # For connecting routes: leg 1 arrival → leg 2 selection
 
+        # Price check: once per booking, on the first passenger's issue(s).
+        # Bookaway's cost is the same for every passenger of an item, so pax 1
+        # stands for the booking (like the voyage grid read). Connecting routes
+        # issue one ticket per leg, so pax 1's legs are summed as they go.
+        price_check = booking.get("priceCheck")
+        pax0_leg_count = sum(1 for t in tasks if t[0] == 0)
+        pax0_legs_done = 0
+        pax0_prior_total = 0.0
+        self._last_verified_total_due = None
+        if price_check:
+            logger.info(
+                f"Price check armed: Bookaway {price_check['bookawayCostPerPax']:,.2f} "
+                f"PHP/pax → expected PRIME Total Due {price_check['expectedTotalDuePerPax']:,.2f} "
+                f"across {pax0_leg_count} issue(s) of passenger 1"
+            )
+        else:
+            logger.warning("No priceCheck in payload — issuing WITHOUT comparing prices")
+
         # Optimization: track previous leg to skip redundant trip field filling
         self._voyage_cache = {}
         prev_leg_key = None
@@ -2408,8 +2564,22 @@ class PrimeDriver:
                             self._check_sold_out_after_voyage()
 
                         # Click Issue, handle confirmation, capture ticket number(s)
+                        leg_price_check = None
+                        if price_check and pax_idx == 0:
+                            leg_price_check = {
+                                "expected_total": price_check["expectedTotalDuePerPax"],
+                                "bookaway_cost": price_check["bookawayCostPerPax"],
+                                "prior_total": pax0_prior_total,
+                                "is_last_leg": pax0_legs_done == pax0_leg_count - 1,
+                                "label": label,
+                                "reference": booking.get("reference", ""),
+                                "issued_tickets": list(pax_results[0]["tickets"]),
+                            }
                         self.click_issue()
-                        ticket_numbers = self.handle_issue_result()
+                        ticket_numbers = self.handle_issue_result(price_check=leg_price_check)
+                        if leg_price_check and self._last_verified_total_due is not None:
+                            pax0_prior_total += self._last_verified_total_due
+                            pax0_legs_done += 1
                         break  # Success, exit retry loop
                     except ElementNotFoundError:
                         if attempt == 0:
@@ -2533,7 +2703,10 @@ class PrimeDriver:
         self._expected_previews = 1
 
         partial_results = list(pax_results.values())
-        any_success = any(r["success"] for r in partial_results)
+        # A passenger whose later leg failed still holds real tickets from
+        # earlier legs (connecting routes): report them so the orchestrator
+        # keeps the booking claimed instead of releasing it with tickets live.
+        any_success = any(r["success"] or r["tickets"] for r in partial_results)
 
         if not has_failure:
             logger.info(f"Booking {booking.get('bookingId', 'N/A')} complete — all passengers OK")

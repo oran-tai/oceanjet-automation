@@ -14,6 +14,7 @@ export type TicketErrorCode =
   | 'ACCOMMODATION_UNAVAILABLE'   // Requested class sold out (other classes may have seats)
   | 'PASSENGER_VALIDATION_ERROR'  // Missing or invalid passenger details (name, age, gender)
   | 'PRIME_VALIDATION_ERROR'      // Catch-all for unexpected PRIME validation dialogs
+  | 'PRICE_MISMATCH'              // PRIME's Total Due differs from Bookaway's cost (5% rule), or Bookaway has no cost to compare — ticket not issued
   | 'APPROVAL_FAILED'             // Tickets issued in PRIME but Bookaway approval API failed — booking stays claimed
   // System-level errors (stop loop + alert)
   | 'PRIME_TIMEOUT'               // PRIME became unresponsive
@@ -22,6 +23,7 @@ export type TicketErrorCode =
   | 'RPA_INTERNAL_ERROR'          // RPA agent hit an internal error
   | 'ORPHAN_TICKET_DETECTED'      // Found an unhandled success popup with codes — manual reconciliation required
   | 'UNEXPECTED_POPUP'            // A popup is blocking the PRIME form (e.g. missing Session ID) — engineer must intervene
+  | 'PRICE_UNREADABLE'            // The Rates pane could not be read (Gemini) — no finance guard, ticket not issued
   // Catch-all
   | 'UNKNOWN_ERROR';              // Unclassified error
 
@@ -34,6 +36,7 @@ export const TICKET_ERROR_LABELS: Record<TicketErrorCode, string> = {
   ACCOMMODATION_UNAVAILABLE: 'Requested accommodation class is sold out',
   PASSENGER_VALIDATION_ERROR: 'Missing or invalid passenger details (check name, age, or gender)',
   PRIME_VALIDATION_ERROR: 'PRIME showed an unexpected validation error',
+  PRICE_MISMATCH: 'PRIME price differs from Bookaway (5% rule) — ticket not issued, check inventory pricing',
   APPROVAL_FAILED: 'Tickets issued in PRIME but Bookaway approval failed — manual approval required',
   PRIME_TIMEOUT: 'PRIME became unresponsive (timeout)',
   PRIME_CRASH: 'PRIME application crashed',
@@ -41,6 +44,7 @@ export const TICKET_ERROR_LABELS: Record<TicketErrorCode, string> = {
   RPA_INTERNAL_ERROR: 'RPA agent encountered an internal error',
   ORPHAN_TICKET_DETECTED: 'Orphan success popup found with ticket codes — manual reconciliation required',
   UNEXPECTED_POPUP: 'A popup is blocking the PRIME form — engineer intervention required',
+  PRICE_UNREADABLE: 'Could not read the price from PRIME — ticket not issued, engineer intervention required',
   UNKNOWN_ERROR: 'An unclassified error occurred',
 };
 
@@ -52,6 +56,7 @@ export const SYSTEM_ERROR_CODES: ReadonlySet<TicketErrorCode> = new Set([
   'RPA_INTERNAL_ERROR',
   'ORPHAN_TICKET_DETECTED',
   'UNEXPECTED_POPUP',
+  'PRICE_UNREADABLE',
 ]);
 
 export interface PassengerData {
@@ -69,12 +74,30 @@ export interface LegData {
   accommodation: string; // PRIME accommodation code (e.g., "TC")
 }
 
+/**
+ * What PRIME must charge for one passenger, derived from Bookaway.
+ * PRIME shows Total Due per issue: a one-way or round-trip ticket is one issue
+ * (round-trip Total Due covers both legs); a connecting route is one issue per
+ * leg, which the RPA sums. The RPA compares the first passenger only.
+ */
+export interface PriceCheck {
+  /** Bookaway supplier cost per passenger across all items (legs), PHP. */
+  bookawayCostPerPax: number;
+  /** bookawayCostPerPax / (1 - discountRate): the PRIME Total Due to expect. */
+  expectedTotalDuePerPax: number;
+  currency: 'PHP';
+  /** OceanJet agreement discount Bookaway already deducted (0.05). */
+  discountRate: number;
+}
+
 export interface TranslatedBooking {
   bookingId: string;
   reference: string;
   bookingType: BookingType;
   passengers: PassengerData[];
   contactInfo?: string;
+  /** Absent when Bookaway carries no PHP cost; the processor then refuses to book. */
+  priceCheck?: PriceCheck;
   departureLeg: LegData;
   returnLeg?: LegData;
   // For connecting routes: the two legs that make up the departure

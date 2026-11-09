@@ -11,6 +11,7 @@ import {
   notifyPartialFailure,
 } from '../notifications/slack.js';
 import { trackEvent } from '../events/bigquery.js';
+import { config } from '../config.js';
 
 export type ProcessResult =
   | { status: 'approved' }
@@ -217,6 +218,38 @@ export async function processBooking(
       };
     }
 
+    // 5b. Price check needs a Bookaway cost to compare against. Without one
+    // we refuse to book: an unchecked ticket is the finance problem itself.
+    if (config.priceCheck.enabled && !translated.priceCheck) {
+      const errorCode: TicketErrorCode = 'PRICE_MISMATCH';
+      const errorDetail =
+        `${TICKET_ERROR_LABELS[errorCode]} — Bookaway booking carries no positive PHP ` +
+        `supplier cost (pricePerPassenger.costInSupplierCurrency), so PRIME's price cannot be verified`;
+      await client.releaseBooking(bookingId);
+      await notifyBookingFailure(reference, bookingId, errorCode, errorDetail);
+      logger.warn('No Bookaway supplier cost, skipping', { reference });
+      await trackEvent('booking_failed', {
+        ...bookingCtx,
+        booking_type: translated.bookingType,
+        origin: translated.departureLeg.origin,
+        destination: translated.departureLeg.destination,
+        passenger_count: translated.passengers.length,
+        error_code: errorCode,
+        error_detail: errorDetail,
+        duration_ms: Date.now() - startTime,
+      });
+      return { status: 'booking-error', reason: errorDetail, errorCode };
+    }
+    if (!config.priceCheck.enabled) {
+      delete translated.priceCheck; // RPA agent issues without comparing
+    } else {
+      logger.info('Price check armed', {
+        reference,
+        bookawayCostPerPax: translated.priceCheck!.bookawayCostPerPax,
+        expectedTotalDuePerPax: translated.priceCheck!.expectedTotalDuePerPax,
+      });
+    }
+
     // 6. Issue tickets via operator
     const ticketResult = await operator.issueTickets(translated);
 
@@ -228,8 +261,10 @@ export async function processBooking(
         ? `${errorLabel} — ${ticketResult.error}`
         : errorLabel;
 
-      // Check for partial failure
-      if (ticketResult.partialResults?.some((r) => r.success)) {
+      // Check for partial failure. A passenger whose later leg failed still
+      // holds tickets from earlier legs (connecting routes) — those must keep
+      // the booking claimed too, or a re-run would issue them twice.
+      if (ticketResult.partialResults?.some((r) => r.success || r.tickets.length > 0)) {
         // Partial failure — keep claimed, alert
         await notifyPartialFailure(
           reference,

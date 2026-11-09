@@ -4,7 +4,9 @@ import type {
   PassengerData,
   LegData,
   BookingType,
+  PriceCheck,
 } from '../types.js';
+import { config } from '../../config.js';
 import {
   resolveStationFromLocation,
   resolveAccommodationCode,
@@ -53,6 +55,47 @@ function resolveAccommodation(item: BookingDetail['items'][0]): string {
     );
   }
   return code;
+}
+
+/**
+ * Derive the per-passenger price PRIME must show from Bookaway's supplier cost.
+ *
+ * Sums `pricePerPassenger[0].costInSupplierCurrency` across the booking's
+ * items (one item per leg: a round trip has two). Passenger 0 stands for all:
+ * Bookaway prices every passenger of an item the same, and the RPA checks
+ * only the first passenger. Returns undefined when any item lacks a positive
+ * PHP cost, so the caller can refuse to book rather than book unchecked.
+ */
+export function buildPriceCheck(
+  booking: BookingDetail,
+  discountRate: number = config.priceCheck.supplierDiscountRate
+): PriceCheck | undefined {
+  let costPerPax = 0;
+  for (const item of booking.items) {
+    const first = item.pricePerPassenger?.[0];
+    const cost = first?.costInSupplierCurrency;
+    if (
+      !first ||
+      typeof cost !== 'number' ||
+      !Number.isFinite(cost) ||
+      cost <= 0 ||
+      (first.supplierCurrency || 'PHP') !== 'PHP'
+    ) {
+      return undefined;
+    }
+    costPerPax += cost;
+  }
+  if (costPerPax <= 0 || !(discountRate >= 0 && discountRate < 1)) return undefined;
+  return {
+    bookawayCostPerPax: round2(costPerPax),
+    expectedTotalDuePerPax: round2(costPerPax / (1 - discountRate)),
+    currency: 'PHP',
+    discountRate,
+  };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 /**
@@ -117,6 +160,7 @@ export function mapBookingToOceanJet(booking: BookingDetail): TranslatedBooking 
     bookingType,
     passengers,
     contactInfo: item.passengers[0]?.contact?.email || '',
+    priceCheck: buildPriceCheck(booking),
     departureLeg: {
       origin: originCode,
       destination: destinationCode,

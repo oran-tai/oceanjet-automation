@@ -93,7 +93,9 @@ export async function notifyPartialFailure(
     .map((r) =>
       r.success
         ? `:white_check_mark: ${r.passengerName}: ${r.tickets.join(', ')}`
-        : `:x: ${r.passengerName}: ${r.error || 'Failed'}`
+        : r.tickets.length > 0
+          ? `:x: ${r.passengerName}: ${r.error || 'Failed'} (already issued: ${r.tickets.join(', ')})`
+          : `:x: ${r.passengerName}: ${r.error || 'Failed'}`
     )
     .join('\n');
   const message =

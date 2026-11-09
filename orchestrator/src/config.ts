@@ -56,6 +56,12 @@ export const config = {
     projectId: (process.env.BQ_PROJECT_ID || '').trim(),
     keyFilename: (process.env.BQ_KEY_FILE || '').trim(),
   },
+  priceCheck: {
+    /** Kill switch: PRICE_CHECK_ENABLED=false books without comparing prices. */
+    enabled: (process.env.PRICE_CHECK_ENABLED || 'true').trim().toLowerCase() !== 'false',
+    /** OceanJet agreement discount already deducted in Bookaway's supplier cost. */
+    supplierDiscountRate: parseFloat(process.env.SUPPLIER_DISCOUNT_RATE || '0.05'),
+  },
   operatorMode: (process.env.OPERATOR_MODE || 'mock') as 'mock' | 'rpa',
   targetBooking: (process.env.TARGET_BOOKING || '').trim(),
 } as const;

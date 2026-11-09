@@ -43,8 +43,10 @@ function makeBookingDetail(overrides: Partial<{
   departureDate: string;
   status: string;
   passengers: { firstName: string; lastName: string; _id: string; extraInfos: { definition: string; value: string }[] }[];
+  /** null = omit Bookaway's price block */
+  costPerPax: number | null;
 }>): BookingDetail {
-  const { departureDate = nearFutureDate(), status = 'pending', passengers } = overrides;
+  const { departureDate = nearFutureDate(), status = 'pending', passengers, costPerPax = 912 } = overrides;
   const defaultPassengers = [
     {
       firstName: 'John',
@@ -80,6 +82,14 @@ function makeBookingDetail(overrides: Partial<{
           toId: { city: { name: 'Bohol' }, address: '' },
         },
         passengers: passengers || defaultPassengers,
+        ...(costPerPax === null
+          ? {}
+          : {
+              pricePerPassenger: (passengers || defaultPassengers).map(() => ({
+                costInSupplierCurrency: costPerPax,
+                supplierCurrency: 'PHP',
+              })),
+            }),
       },
     ],
   };
@@ -120,6 +130,89 @@ describe('processBooking', () => {
     expect(approval.approvalInputs.bookingCode).toBe('T001');
     expect(approval.approvalInputs.departureTrip.seatsNumber).toEqual(['T001']);
     expect(approval.approvalInputs).not.toHaveProperty('_id');
+  });
+
+  it('sends the price check to the operator', async () => {
+    const operator = makeMockOperator();
+    await processBooking(makeBookingSummary(), operator, makeMockClient());
+    const sent = (operator.issueTickets as any).mock.calls[0][0];
+    expect(sent.priceCheck).toEqual({
+      bookawayCostPerPax: 912,
+      expectedTotalDuePerPax: 960,
+      currency: 'PHP',
+      discountRate: 0.05,
+    });
+  });
+
+  it('refuses to book when Bookaway carries no supplier cost', async () => {
+    const operator = makeMockOperator();
+    const client = makeMockClient(makeBookingDetail({ costPerPax: null }));
+    const result = await processBooking(makeBookingSummary(), operator, client);
+    expect(result.status).toBe('booking-error');
+    expect((result as any).errorCode).toBe('PRICE_MISMATCH');
+    expect(operator.issueTickets).not.toHaveBeenCalled();
+    expect(client.releaseBooking).toHaveBeenCalledWith('booking123');
+  });
+
+  it('treats PRICE_MISMATCH from the RPA as a booking-level error (release, continue)', async () => {
+    const client = makeMockClient();
+    const result = await processBooking(
+      makeBookingSummary(),
+      makeMockOperator({
+        success: false,
+        departureTickets: [],
+        returnTickets: [],
+        errorCode: 'PRICE_MISMATCH',
+        error: 'PRIME Total Due 960.00 != expected 880.00',
+      }),
+      client
+    );
+    expect(result.status).toBe('booking-error');
+    expect((result as any).errorCode).toBe('PRICE_MISMATCH');
+    expect(client.releaseBooking).toHaveBeenCalled();
+  });
+
+  it('treats PRICE_UNREADABLE as a system-level error (stop)', async () => {
+    const result = await processBooking(
+      makeBookingSummary(),
+      makeMockOperator({
+        success: false,
+        departureTickets: [],
+        returnTickets: [],
+        errorCode: 'PRICE_UNREADABLE',
+        error: 'Total Due not readable',
+      }),
+      makeMockClient()
+    );
+    expect(result.status).toBe('system-error');
+  });
+
+  it('keeps the booking claimed when a failed passenger already holds tickets', async () => {
+    const client = makeMockClient();
+    const result = await processBooking(
+      makeBookingSummary(),
+      makeMockOperator({
+        success: false,
+        departureTickets: ['13000001'],
+        returnTickets: [],
+        errorCode: 'PRICE_MISMATCH',
+        error: 'leg 2 mismatch',
+        partialResults: [
+          {
+            passengerIndex: 0,
+            passengerName: 'John Doe',
+            tickets: ['13000001'],
+            success: false,
+            errorCode: 'PRICE_MISMATCH',
+            error: 'leg 2 mismatch',
+          },
+        ],
+      }),
+      client
+    );
+    expect(result.status).toBe('booking-error');
+    expect((result as any).reason).toContain('Partial failure');
+    expect(client.releaseBooking).not.toHaveBeenCalled();
   });
 
   it('releases and alerts on booking-level ticket failure', async () => {

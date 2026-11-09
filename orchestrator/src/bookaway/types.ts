@@ -58,6 +58,8 @@ export interface BookingDetail {
   };
   misc: BookingMisc;
   items: BookingItem[];
+  /** Item reference → supplier cost for the whole item (all passengers). */
+  supplierCostPerItem?: Record<string, { costInSupplierCurrency?: number }>;
 }
 
 export interface BookingMisc {
@@ -67,6 +69,16 @@ export interface BookingMisc {
   returnDepartureDate?: string;
   returnDepartureTime?: string;
   passengers: string;
+}
+
+/**
+ * Price block Bookaway attaches per passenger (and per item). Only the
+ * supplier-side cost matters to the OceanJet price check: it is OceanJet's
+ * fare in PHP minus the 5% agreement discount (settled monthly, off-system).
+ */
+export interface SupplierPrice {
+  costInSupplierCurrency?: number;
+  supplierCurrency?: string;
 }
 
 export interface BookingItem {
@@ -80,6 +92,8 @@ export interface BookingItem {
     toId: LocationInfo;
   };
   passengers: Passenger[];
+  /** One entry per passenger; all passengers of an item carry the same cost. */
+  pricePerPassenger?: SupplierPrice[];
 }
 
 export interface Passenger {

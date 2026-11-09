@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapBookingToOceanJet } from '../src/operators/oceanjet/mapper.js';
+import { mapBookingToOceanJet, buildPriceCheck } from '../src/operators/oceanjet/mapper.js';
 import type { BookingDetail } from '../src/bookaway/types.js';
 
 /** Extra info definition IDs matching real Bookaway API */
@@ -17,6 +17,9 @@ function makeBooking(overrides: Partial<{
   returnDepartureTime: string;
   lineClass: string;
   passengers: BookingDetail['items'][0]['passengers'];
+  /** Per-passenger supplier cost in PHP; null = omit the price block entirely */
+  costPerPax: number | null;
+  supplierCurrency: string;
 }>): BookingDetail {
   const {
     originCity = 'Cebu',
@@ -28,6 +31,8 @@ function makeBooking(overrides: Partial<{
     returnDepartureDate,
     returnDepartureTime,
     lineClass = 'Tourist',
+    costPerPax = 912,
+    supplierCurrency = 'PHP',
     passengers = [
       {
         firstName: 'John',
@@ -75,6 +80,34 @@ function makeBooking(overrides: Partial<{
           },
         },
         passengers,
+        ...(costPerPax === null
+          ? {}
+          : {
+              pricePerPassenger: passengers.map(() => ({
+                costInSupplierCurrency: costPerPax,
+                supplierCurrency,
+              })),
+            }),
+      },
+    ],
+  };
+}
+
+/** Add a second item (the return leg) carrying the same per-pax cost. */
+function withReturnItem(booking: BookingDetail, costPerPax = 912): BookingDetail {
+  const dep = booking.items[0];
+  return {
+    ...booking,
+    items: [
+      dep,
+      {
+        ...dep,
+        reference: 'IT7654321',
+        trip: { fromId: dep.trip.toId, toId: dep.trip.fromId },
+        pricePerPassenger: dep.passengers.map(() => ({
+          costInSupplierCurrency: costPerPax,
+          supplierCurrency: 'PHP',
+        })),
       },
     ],
   };
@@ -255,6 +288,67 @@ describe('mapBookingToOceanJet', () => {
     expect(result.passengers[1].firstName).toBe('Jane');
     expect(result.passengers[1].age).toBe('28');
     expect(result.passengers[1].gender).toBe('Female');
+  });
+
+  describe('priceCheck', () => {
+    it('derives the expected PRIME Total Due from the per-pax cost (one-way Tourist)', () => {
+      const result = mapBookingToOceanJet(makeBooking({ costPerPax: 912 }));
+      expect(result.priceCheck).toEqual({
+        bookawayCostPerPax: 912,
+        expectedTotalDuePerPax: 960,
+        currency: 'PHP',
+        discountRate: 0.05,
+      });
+    });
+
+    it('Business: 1377.5 PHP in Bookaway means 1450.00 in PRIME', () => {
+      const result = mapBookingToOceanJet(makeBooking({ lineClass: 'Business', costPerPax: 1377.5 }));
+      expect(result.priceCheck?.expectedTotalDuePerPax).toBe(1450);
+    });
+
+    it('round-trip sums both items because PRIME shows one Total Due for both legs', () => {
+      const booking = withReturnItem(
+        makeBooking({
+          returnDepartureDate: 'Sun, Apr 19th 2026',
+          returnDepartureTime: '09:00',
+          costPerPax: 912,
+        })
+      );
+      const result = mapBookingToOceanJet(booking);
+      expect(result.bookingType).toBe('round-trip');
+      expect(result.priceCheck?.bookawayCostPerPax).toBe(1824);
+      expect(result.priceCheck?.expectedTotalDuePerPax).toBe(1920);
+    });
+
+    it('connecting one-way keeps the single item cost (RPA sums the two legs)', () => {
+      const result = mapBookingToOceanJet(
+        makeBooking({ originCity: 'Cebu', destinationCity: 'Siquijor', costPerPax: 1824 })
+      );
+      expect(result.bookingType).toBe('connecting-one-way');
+      expect(result.priceCheck?.expectedTotalDuePerPax).toBe(1920);
+    });
+
+    it('is undefined when the price block is missing', () => {
+      expect(mapBookingToOceanJet(makeBooking({ costPerPax: null })).priceCheck).toBeUndefined();
+    });
+
+    it('is undefined when the cost is zero or the currency is not PHP', () => {
+      expect(buildPriceCheck(makeBooking({ costPerPax: 0 }))).toBeUndefined();
+      expect(buildPriceCheck(makeBooking({ supplierCurrency: 'USD' }))).toBeUndefined();
+    });
+
+    it('is undefined when one item of a round trip has no cost', () => {
+      const booking = withReturnItem(
+        makeBooking({ returnDepartureDate: 'Sun, Apr 19th 2026', returnDepartureTime: '09:00' })
+      );
+      delete booking.items[1].pricePerPassenger;
+      expect(buildPriceCheck(booking)).toBeUndefined();
+    });
+
+    it('honours an explicit discount rate', () => {
+      const pc = buildPriceCheck(makeBooking({ costPerPax: 900 }), 0.1);
+      expect(pc?.expectedTotalDuePerPax).toBe(1000);
+    });
   });
 
   it('throws on unknown origin city', () => {
