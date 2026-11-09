@@ -14,6 +14,7 @@ cost, to the centavo (e.g. BC CEB-TAG: PRIME 1,450.00, Bookaway 1,377.50).
 Two modes:
 
 OFFLINE — read a saved screenshot, no PRIME interaction (seconds):
+    py tests\\probe_rates_pane_gemini.py --image            (newest popup-open screenshot)
     py tests\\probe_rates_pane_gemini.py --image debug\\rates_probe_2_popup_open_<ts>.png
     py tests\\probe_rates_pane_gemini.py --image <png> --bookaway-cost 1377.5
   Default crop is the Rates rectangle logged on the VM (842,86,1059,399);
@@ -298,7 +299,9 @@ def run_live(args):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--image", help="offline: saved full-screen PNG to read")
+    p.add_argument("--image", nargs="?", const="latest",
+                   help="offline: saved full-screen PNG to read; with no path, the newest "
+                        "debug/rates_probe_2_popup_open_*.png")
     p.add_argument("--rect", default=",".join(map(str, DEFAULT_RECT)),
                    help="offline: Rates pane L,T,R,B in screen px (default: VM Nov 9 run)")
     p.add_argument("--no-crop", action="store_true", help="offline: send the full screenshot")
@@ -314,7 +317,12 @@ def main():
     args.rect = tuple(int(x) for x in args.rect.split(","))
 
     if not args.image and not args.live:
-        p.error("pass --image <png> (offline) or --live")
+        p.error("pass --image [png] (offline) or --live")
+    if args.image == "latest":
+        candidates = sorted(Path("debug").glob("rates_probe_2_popup_open_*.png"))
+        if not candidates:
+            p.error("no debug/rates_probe_2_popup_open_*.png found; pass --image <png>")
+        args.image = str(candidates[-1])
 
     logger.info("=" * 60)
     results = run_offline(args) if args.image else run_live(args)
