@@ -2089,22 +2089,40 @@ class PrimeDriver:
         (system-level: a Rates pane we cannot read means no finance guard).
         """
         expected = pc["expected_total"]
+        label = f"{pc.get('reference', 'booking')}_{pc['label']}"
         reading = parse_rates_response("")
+        verdict, detail = "unreadable", "Total Due not readable from the Rates pane"
         for attempt in range(1, 3):
-            reading = self._read_rates_pane(f"{pc.get('reference', 'booking')}_{pc['label']}")
-            if reading["total_due"] is not None:
-                break
-            logger.warning(f"Rates pane read attempt {attempt}/2 returned no Total Due")
-            time.sleep(2)
+            attempt_reading = self._read_rates_pane(label)
+            if attempt_reading["total_due"] is None:
+                logger.warning(f"Rates pane read attempt {attempt}/2 returned no Total Due")
+                if reading["total_due"] is None:
+                    reading = attempt_reading  # keep the raw text for the alert
+            else:
+                # A readable number always wins over an unreadable attempt.
+                reading = attempt_reading
+                verdict, detail = evaluate_leg(
+                    reading["total_due"], expected, pc["prior_total"], pc["is_last_leg"]
+                )
+                if verdict == "match":
+                    break
+                # One OCR misread must not cost a booking (Nov 9, 2026: a comma
+                # read as a period turned 1,450.00 into 1.45): take a fresh
+                # screenshot + Gemini read before declaring a mismatch. A false
+                # match is implausible — it would need Gemini to invent the
+                # exact expected centavo amount.
+                logger.warning(f"Rates pane read attempt {attempt}/2 did not match: {detail}")
+            if attempt < 2:
+                time.sleep(2)
 
-        verdict, detail = evaluate_leg(
-            reading["total_due"], expected, pc["prior_total"], pc["is_last_leg"]
-        )
+        raw_oneline = " | ".join(
+            line.strip() for line in (reading.get("raw") or "").splitlines() if line.strip()
+        )[:200]
         ctx = (
             f"Bookaway cost {pc['bookaway_cost']:,.2f} PHP/pax, expected PRIME total "
             f"{expected:,.2f}; Rates pane read accom={reading['accom'] or '?'} "
             f"trip={reading['trip'] or '?'} fare={reading['fare']} "
-            f"total_due={reading['total_due']}"
+            f"total_due={reading['total_due']}; Gemini said: {raw_oneline or '(nothing)'}"
         )
         if verdict == "match":
             logger.info(f"Price check OK for {pc['label']}: {detail} ({ctx})")

@@ -29,6 +29,33 @@ def test_parse_money_formats():
     assert parse_money("n/a") is None
 
 
+def test_parse_money_ocr_separator_variants():
+    # Nov 9, 2026: Gemini printed the thousands comma as a period on
+    # BW6070904 (1.450.00 → parsed 1.45) and BW6071156 (1.080.00 → 1.08).
+    assert parse_money("1.450.00") == 1450.0
+    assert parse_money("1.080.00") == 1080.0
+    assert parse_money("1.450,00") == 1450.0
+    assert parse_money("1450.00") == 1450.0
+    assert parse_money("1 450.00") == 1450.0
+    assert parse_money("1080") == 1080.0
+    assert parse_money("1,450") == 1450.0
+    assert parse_money("1.450") == 1450.0
+    assert parse_money("PHP 1,450.00") == 1450.0
+    assert parse_money("1.45") == 1.45
+    assert parse_money("12,345,678.90") == 12345678.9
+    assert parse_money("- 50.00") == -50.0
+
+
+def test_parse_rates_response_period_as_thousands_separator():
+    raw = (
+        "ACCOM: TC\nTRIP: DUM-TAG\nFARE: 1.080.00\nDISCOUNT: - 0.00\n"
+        "TERMINAL_FEE: 0.00\nTOTAL_DUE: 1.080.00"
+    )
+    r = parse_rates_response(raw)
+    assert r["total_due"] == 1080.0
+    assert evaluate_leg(r["total_due"], 1026 / 0.95, 0.0, is_last_leg=True)[0] == "match"
+
+
 def test_parse_rates_response_vm_sample():
     r = parse_rates_response(GEMINI_BC)
     assert r["accom"] == "BC"

@@ -89,16 +89,9 @@ PROMPT = (
 # ---------------------------------------------------------------- parsing
 
 def parse_money(text: str):
-    """'1,450.00' -> 1450.0; '- 0.00' -> 0.0; '' / junk -> None."""
-    if not text:
-        return None
-    m = re.search(r"-?\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|-?\s?\d+(?:\.\d{1,2})?", text)
-    if not m:
-        return None
-    try:
-        return float(m.group(0).replace(",", "").replace(" ", ""))
-    except ValueError:
-        return None
+    """Shared with production: agent.price_check.parse_money (separator-robust)."""
+    from agent.price_check import parse_money as _pm
+    return _pm(text)
 
 
 def parse_response(raw: str) -> dict:

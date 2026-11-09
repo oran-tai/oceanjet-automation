@@ -26,7 +26,9 @@ RATES_PROMPT = (
     "class code such as TC, BC or OA), 'Trip' (origin-destination such as "
     "CEB-TAG), a 'Charge to' box, 'Balance', 'Running Total Counter', then "
     "four money rows: 'Fare', 'Discount', 'Terminal Fee' and 'Total Due', "
-    "each printed with two decimals (for example 1,450.00 or 0.00).\n\n"
+    "each printed with two decimals, a period before the decimals and a comma "
+    "as the thousands separator (for example 1,450.00 or 0.00). Keep that "
+    "comma/period convention in your answer.\n\n"
     "Read the values exactly as printed. Do not compute, round or guess. "
     "If a row is blank or shows no number, leave that field empty. "
     "Ignore 'Balance' and 'Running Total Counter'.\n\n"
@@ -39,20 +41,48 @@ RATES_PROMPT = (
     "TOTAL_DUE: <Total Due as printed or empty>"
 )
 
-_MONEY_RE = re.compile(r"-?\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|-?\s?\d+(?:\.\d{1,2})?")
+# A run of digits with any mix of thousands / decimal separators, optionally
+# preceded by a minus (PRIME prints discounts as "- 0.00") or a currency mark.
+_MONEY_RE = re.compile(r"-?\s?\d(?:[\d.,]|\s(?=\d))*")
 
 
 def parse_money(text: str):
-    """'1,450.00' -> 1450.0; '- 0.00' -> 0.0; '' / junk -> None."""
+    """Parse a PRIME amount as Gemini might transcribe it.
+
+    PRIME prints two decimals with a comma thousands separator (1,450.00), but
+    the OCR of the 2x-upscaled crop sometimes turns the comma into a period
+    ("1.450.00", seen Nov 9, 2026 on BW6070904 / BW6071156 and parsed as 1.45)
+    or drops it ("1450.00"). The rule here reads any of these the way a human
+    would: the LAST separator is the decimal point only when 1-2 digits follow
+    it; every other separator (and any space) is a thousands separator.
+
+    '1,450.00' / '1.450.00' / '1.450,00' / '1450.00' / '1 450.00' -> 1450.0
+    '1,450' / '1.450' -> 1450.0 (three digits after a lone separator = group)
+    '912.00' -> 912.0; '1.45' -> 1.45; '- 0.00' -> 0.0; '' / junk -> None
+    """
     if not text:
         return None
     m = _MONEY_RE.search(text)
     if not m:
         return None
+    token = m.group(0)
+    negative = token.lstrip().startswith("-")
+    digits = re.sub(r"\s", "", token.lstrip("- \t"))
+    seps = [i for i, c in enumerate(digits) if c in ".,"]
+    if seps:
+        last = seps[-1]
+        tail = digits[last + 1:]
+        if 1 <= len(tail) <= 2 and tail.isdigit():
+            digits = digits[:last].replace(".", "").replace(",", "") + "." + tail
+        else:
+            digits = digits.replace(".", "").replace(",", "")
+    if not digits or digits == ".":
+        return None
     try:
-        return float(m.group(0).replace(",", "").replace(" ", ""))
+        value = float(digits)
     except ValueError:
         return None
+    return -value if negative and value else value
 
 
 def parse_rates_response(raw: str) -> dict:
