@@ -74,13 +74,18 @@ Write-Host "[4/7] Setting up project at $PROJECT_DIR..." -ForegroundColor Yellow
 if (Test-Path "$PROJECT_DIR\.git") {
     # Repo exists — pull latest
     Push-Location $PROJECT_DIR
-    & git pull origin main 2>&1
+    # No 2>&1 on native commands: git/npm write progress and warnings to stderr,
+    # and with $ErrorActionPreference = "Stop" PowerShell 5.1 turns redirected
+    # stderr into a terminating error. Check the exit code instead.
+    & git pull origin main
+    if ($LASTEXITCODE -ne 0) { throw "git pull failed (exit $LASTEXITCODE)" }
     Pop-Location
     Write-Host "  Updated from GitHub" -ForegroundColor Green
 } else {
     # Fresh clone
     if (Test-Path $PROJECT_DIR) { Remove-Item $PROJECT_DIR -Recurse -Force }
-    & git clone $REPO_URL $PROJECT_DIR 2>&1
+    & git clone $REPO_URL $PROJECT_DIR
+    if ($LASTEXITCODE -ne 0) { throw "git clone failed (exit $LASTEXITCODE)" }
     Write-Host "  Cloned from GitHub" -ForegroundColor Green
 }
 
@@ -90,12 +95,14 @@ Write-Host "[5/7] Installing dependencies..." -ForegroundColor Yellow
 # Python (RPA agent)
 Push-Location $RPA_DIR
 & py -m pip install -r requirements.txt --quiet
+if ($LASTEXITCODE -ne 0) { throw "pip install failed (exit $LASTEXITCODE)" }
 Pop-Location
 Write-Host "  Python packages installed" -ForegroundColor Green
 
 # Node.js (Orchestrator)
 Push-Location $ORCH_DIR
-& npm install --silent 2>&1 | Out-Null
+& npm install --silent
+if ($LASTEXITCODE -ne 0) { throw "npm install failed (exit $LASTEXITCODE)" }
 Pop-Location
 Write-Host "  npm packages installed" -ForegroundColor Green
 
