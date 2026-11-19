@@ -7,6 +7,8 @@ import type { OperatorModule, TranslatedBooking, TicketResult } from '../types.j
 export class MockOperator implements OperatorModule {
   private ticketCounter = 0;
 
+  constructor(readonly name?: string) {}
+
   private nextTicket(): string {
     this.ticketCounter++;
     return `MOCK-${String(this.ticketCounter).padStart(4, '0')}`;

@@ -63,18 +63,27 @@ export async function notifyBookingFailure(
   await sendSlackMessage(message, PRIMARY_ONLY_BOOKING_ERRORS.has(errorCode));
 }
 
+/**
+ * System-level failure. Without `agentName` (single-agent setup, or every
+ * agent is down) the whole automation has stopped. With `agentName` only
+ * that RPA agent stopped and the others keep booking.
+ */
 export async function notifySystemFailure(
   reason: string,
-  bookingReference?: string
+  bookingReference?: string,
+  agentName?: string
 ): Promise<void> {
-  const message =
-    `:rotating_light: *System Failure — Automation Stopped*\n` +
-    `*Reason:* ${reason}\n` +
-    (bookingReference
-      ? `*Last booking:* ${bookingReference}\n`
-      : '') +
-    `The automation has stopped. Please verify PRIME is online and re-login before restarting.`;
-  logger.error('System failure alert', { reason, bookingReference });
+  const message = agentName
+    ? `:rotating_light: *System Failure — RPA Agent ${agentName} Stopped*\n` +
+      `*Reason:* ${reason}\n` +
+      (bookingReference ? `*Last booking:* ${bookingReference}\n` : '') +
+      `The other RPA agents keep booking. Please verify PRIME on ${agentName} is online and re-login, ` +
+      `then restart the orchestrator to bring ${agentName} back.`
+    : `:rotating_light: *System Failure — Automation Stopped*\n` +
+      `*Reason:* ${reason}\n` +
+      (bookingReference ? `*Last booking:* ${bookingReference}\n` : '') +
+      `The automation has stopped. Please verify PRIME is online and re-login before restarting.`;
+  logger.error('System failure alert', { reason, bookingReference, agent: agentName });
   await sendSlackMessage(message);
 }
 

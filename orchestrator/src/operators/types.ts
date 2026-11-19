@@ -128,5 +128,18 @@ export interface TicketResult {
 }
 
 export interface OperatorModule {
+  /**
+   * Agent label for logs and alerts. Set only when the orchestrator drives
+   * several agents — a single agent keeps the original alert wording.
+   */
+  readonly name?: string;
   issueTickets(booking: TranslatedBooking): Promise<TicketResult>;
+  /** Startup reachability check. Operators without one are assumed ready. */
+  checkHealth?(): Promise<AgentHealth>;
+}
+
+export interface AgentHealth {
+  reachable: boolean;
+  primeRunning: boolean;
+  error?: string;
 }

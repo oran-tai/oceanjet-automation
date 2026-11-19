@@ -1,12 +1,15 @@
 # OceanJet Automated Booking Integration
 
 ## Project Overview
-Monorepo with two microservices that automate OceanJet ferry bookings from Bookaway. Both run on the same Windows VM.
+Monorepo with two microservices that automate OceanJet ferry bookings from Bookaway. One orchestrator drives one or more RPA agents, one per Windows VM.
 
 ## Architecture
 - **Orchestrator** (`orchestrator/`): TypeScript/Node.js — polls Bookaway API, translates bookings, sends to RPA, approves
 - **RPA Agent** (`rpa-agent/`): Python — drives OceanJet PRIME desktop app via pywinauto
-- Communication: HTTP POST to `localhost:8080` between orchestrator and RPA agent
+- Communication: HTTP POST to each agent on port 8080 (`RPA_AGENT_URLS`, comma-separated, optional `name=url`; falls back to `RPA_AGENT_URL`, default `localhost:8080`)
+- **Multiple VMs** (Nov 19, 2026): exactly **one orchestrator** runs, on VM2 (`EC2AMAZ-4FDA0B8`, 10.122.3.161), with `RPA_AGENT_URLS=VM2=http://localhost:8080,VM1=http://10.122.2.27:8080`. VM1 (`EC2AMAZ-H35KUGL`) runs only `run-rpa`. VM2 → VM1:8080 is open (AWS + Windows Firewall rule restricted to 10.122.3.161); VM1 → VM2 is blocked by AWS, which is why the orchestrator lives on VM2. Never start a second orchestrator — claims are blind `PUT inProgressBy` writes, so two orchestrators would issue tickets twice
+- **Dispatcher** (`src/orchestrator/dispatcher.ts`): the only place bookings are picked and claimed. `next()` runs strictly one call at a time (fetch a fresh list → earliest-departure booking that is unclaimed, not in flight, not held → claim → mark in flight), so two agents never get the same booking. Holds after a booking finishes (`holdAfter` in `loop.ts`): system error → until restart (tickets may exist, e.g. an orphan — no other agent may touch it before a human looks), booking error → `BOOKING_ERROR_COOLDOWN_MS`, approved/skipped → one poll interval
+- **Workers** (`runAgents` in `loop.ts`): one per agent, each paces itself (90–180s after an approved booking). A system error stops **that agent only** — the Slack alert names it ("RPA Agent VM1 Stopped", other agents keep booking); when every agent has stopped, one extra "Automation Stopped" alert. With a single agent no names are set and alerts read exactly as before. At startup each agent's `/health` is checked; an unreachable agent or one without a PRIME window is left out with an alert, and the orchestrator exits if none is ready. The poll-cycle summary is sent whenever the queue runs dry
 
 ## Key Commands
 
@@ -62,7 +65,7 @@ cd C:\oceanjet-automation\orchestrator && powershell -Command "(Get-Content .env
 ```batch
 stop
 ```
-Creates a `.stop` file that the orchestrator picks up between bookings — finishes the current booking, then exits cleanly with no error notifications. The RPA agent stays idle until you close its window manually.
+Creates a `.stop` file that the orchestrator picks up between bookings — every agent finishes its current booking, then the orchestrator exits cleanly with no error notifications. Run it on the VM that hosts the orchestrator (VM2). The RPA agents stay idle until you close their windows manually.
 
 ### Checking env file
 ```batch
@@ -123,7 +126,7 @@ Slack alert includes the ticket codes and pax First/Last Name (read by Gemini fr
 **Station dropdown retry**: `_select_station_with_recovery(trip_details, index, code, role)` tries `_select_station_by_typing()` first (Sept 30, 2026: the typed path is VM-validated and the list path had failed to enumerate on every attempt since Sept 26, costing two list attempts + a Gemini call + a retry per station); a verified typed select returns immediately. Otherwise it selects via `_select_combo_verified` (same select() + physical-open + read-back path as accommodation/sex). If the opened list was enumerated without the station → `STATION_NOT_FOUND` immediately (no Gemini call). Any other failure (list never opened / value didn't verify) → classify the blocker via Gemini and dispatch: success_popup → raise `ORPHAN_TICKET_DETECTED`, print_preview → close, error_popup → dismiss + retry, none → retry anyway. If the retry still can't drive the list, stations only, as a last resort: `_select_station_by_typing()` (Escape if the list is dropped, click the combo's Edit child, Home/Shift+End, type the code, strict read-back, never Enter or Tab) — added Sept 26, 2026 after the origin list was visibly open yet pywinauto enumerated no items; station combos are editable (Edit + Open) and the voyage search is a separate button click, so no combo event is relied upon. The retry's own error propagates when typing doesn't verify (`STATION_NOT_FOUND` if absent, `RPA_INTERNAL_ERROR` if the UI still can't be driven). **Same-station popup collision** (Sept 30, 2026, validated on VM): the station combos auto-complete on the first keystroke to the first station with that letter ('S'→SIQ) and PRIME validates on change, so with a stale other station (Refresh keeps the previous booking's stations) the 'Origin and Destination must not be the same' popup fires mid-word and eats the rest; retyping always hits the same match. `_select_station_by_typing` dismisses that popup before each attempt and, on a read-back miss with the popup up, dismisses it and steps the combo with Down/Up arrows (`_step_station_combo_to`, bounded, read-back after every press, never Enter) until it reads the code. VM checks: `py tests\test_station_combo_keyboard.py` (TAG→CEB→TAG, no ticket), `py tests\test_station_typing_same_station_popup.py` (origin collision, popup already open, destination collision) and `py tests\probe_combo_enumeration.py` (logs what pywinauto sees under the dropped list).
 
 ## Pacing
-- Inter-booking delay: 90–180s, avg 135s (orchestrator, only after approved bookings; the dashboard's runtime formula relies on the 135s average)
+- Inter-booking delay: 90–180s, avg 135s, **per agent** (orchestrator, only after approved bookings; the dashboard's runtime formula relies on the 135s average and assumes one agent — with two agents in parallel the pacing time overlaps)
 - Inter-passenger delay: 5–15s (RPA agent)
 - Booking error cooldown: 24h default (`BOOKING_ERROR_COOLDOWN_MS`), in-memory, resets on restart
 

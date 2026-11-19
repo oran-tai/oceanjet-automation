@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { parseAgentList } from './utils/agent-list.js';
 
 dotenv.config();
 
@@ -44,8 +45,9 @@ export const config = {
     webhookUrl2: process.env.SLACK_WEBHOOK_URL_2 || '',
   },
   rpa: {
-    agentUrl: process.env.RPA_AGENT_URL || 'http://localhost:8080',
-    authToken: process.env.RPA_AUTH_TOKEN || '',
+    /** Every RPA agent the orchestrator dispatches to (one PRIME session each). */
+    agents: parseAgentList(process.env.RPA_AGENT_URLS, process.env.RPA_AGENT_URL),
+    authToken: (process.env.RPA_AUTH_TOKEN || '').trim(),
   },
   pacing: {
     bookingDelayMinMs: parseInt(process.env.BOOKING_DELAY_MIN_MS || '90000', 10),  // 1.5 min

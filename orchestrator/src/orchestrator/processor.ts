@@ -296,7 +296,7 @@ export async function processBooking(
       // System-level RPA error — release, alert, and stop the loop
       if (SYSTEM_ERROR_CODES.has(errorCode)) {
         await client.releaseBooking(bookingId);
-        await notifySystemFailure(errorDetail, reference);
+        await notifySystemFailure(errorDetail, reference, operator.name);
         logger.error('System-level RPA error, stopping', {
           reference,
           errorCode,
@@ -457,7 +457,7 @@ export async function processBooking(
         reference,
       });
     }
-    await notifySystemFailure(error.message, reference);
+    await notifySystemFailure(error.message, reference, operator.name);
     logger.error('System error during booking processing', {
       reference,
       error: error.message,

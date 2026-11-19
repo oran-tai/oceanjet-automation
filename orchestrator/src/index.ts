@@ -14,18 +14,21 @@ async function main() {
   // Create Bookaway client
   const client = new BookawayClient();
 
-  // Create operator based on mode
-  let operator: OperatorModule;
+  // One operator per RPA agent. Names appear in alerts only when there are
+  // several agents, so a single-agent setup keeps its original alerts.
+  const agents = config.rpa.agents;
+  const multi = agents.length > 1;
+  let operators: OperatorModule[];
   if (config.operatorMode === 'mock') {
-    logger.info('Using mock operator (test mode)');
-    operator = new MockOperator();
+    logger.info('Using mock operator (test mode)', { agents: agents.length });
+    operators = agents.map((a) => new MockOperator(multi ? a.name : undefined));
   } else {
-    logger.info('Using RPA operator', { rpaUrl: config.rpa.agentUrl });
-    operator = new OceanJetRpaOperator();
+    logger.info('Using RPA operator', { agents: agents.map((a) => `${a.name} → ${a.url}`) });
+    operators = agents.map((a) => new OceanJetRpaOperator(a.url, multi ? a.name : undefined));
   }
 
   // Start the orchestrator loop
-  await startOrchestrator(client, operator);
+  await startOrchestrator(client, operators);
 }
 
 main().catch((error) => {
