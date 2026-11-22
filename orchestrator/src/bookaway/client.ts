@@ -10,6 +10,9 @@ import type {
   ApprovalRequest,
 } from './types.js';
 
+/** Bookings per list request; the dispatcher pages on with `offset` when a page is all held/claimed. */
+export const PENDING_PAGE_SIZE = 50;
+
 export class BookawayClient {
   private client: AxiosInstance;
   private accessToken: string | null = null;
@@ -71,8 +74,9 @@ export class BookawayClient {
     logger.info('Logged in to Bookaway successfully');
   }
 
-  async fetchPendingBookings(): Promise<BookingSummary[]> {
-    logger.info('Fetching pending OceanJet bookings...');
+  /** One page of pending bookings, earliest departure first; `offset` skips that many. */
+  async fetchPendingBookings(offset = 0): Promise<BookingSummary[]> {
+    logger.info('Fetching pending OceanJet bookings...', offset > 0 ? { offset } : undefined);
     const response = await this.client.get<BookingListResponse>(
       '/bookings/bookings',
       {
@@ -82,7 +86,8 @@ export class BookawayClient {
           customerStatus: 'pending',
           payment: 'paid;authorized',
           sort: 'departureDate:1',
-          limit: 50,
+          limit: PENDING_PAGE_SIZE,
+          offset,
           disableCount: true,
           domain: 'all',
           date: 'created',

@@ -1,4 +1,4 @@
-import type { BookawayClient } from '../bookaway/client.js';
+import { PENDING_PAGE_SIZE, type BookawayClient } from '../bookaway/client.js';
 import type { BookingSummary } from '../bookaway/types.js';
 import { logger } from '../utils/logger.js';
 import { isDepartureWithinWindow } from '../utils/time.js';
@@ -24,6 +24,9 @@ export function preClaimSkipReason(booking: BookingSummary): string | null {
 
 /** Hold a booking until the agent's worker restarts (a human must look at it). */
 export const HOLD_UNTIL_RESTART = UNTIL_AGENT_RESTART;
+
+/** At most this many list pages per pick (PENDING_PAGE_SIZE each). */
+export const MAX_PAGES = 20;
 
 /** How long a booking stays held when its agent restarted mid-booking. */
 export const INTERRUPTED_HOLD_MS = 24 * 3_600_000;
@@ -89,12 +92,39 @@ export class Dispatcher implements BookingDispatcher {
 
   private async pick(agent: string, target?: string): Promise<DispatchResult> {
     const now = this.now();
-    const [bookings, taken] = await Promise.all([
-      this.client.fetchPendingBookings(),
+    const [firstPage, taken] = await Promise.all([
+      this.client.fetchPendingBookings(0),
       this.store.active(now),
     ]);
-    let preClaimSkipped = 0;
+    const counter = { preClaimSkipped: 0 };
 
+    // Page on while a whole page is held / claimed / taken: held bookings sit at
+    // the front of the list (earliest departure first) and would otherwise hide
+    // every later booking (Nov 22, 2026: 50 of 1,712 pending were visible, all held)
+    let page = firstPage;
+    for (let n = 0; ; n++) {
+      const found = await this.pickFrom(page, taken, agent, target, now, counter);
+      if (found !== undefined) return { booking: found, preClaimSkipped: counter.preClaimSkipped };
+      if (page.length < PENDING_PAGE_SIZE || n + 1 >= MAX_PAGES) break;
+      page = await this.client.fetchPendingBookings((n + 1) * PENDING_PAGE_SIZE);
+    }
+    return { booking: null, preClaimSkipped: counter.preClaimSkipped };
+  }
+
+  /**
+   * Try one page. Returns the claimed booking, null when the rest of the list
+   * is beyond the window (sorted by departure, so stop paging), or undefined
+   * when nothing on this page could be taken (page on).
+   */
+  private async pickFrom(
+    bookings: BookingSummary[],
+    taken: Map<string, unknown>,
+    agent: string,
+    target: string | undefined,
+    now: number,
+    counter: { preClaimSkipped: number }
+  ): Promise<BookingSummary | null | undefined> {
+    let beyondWindow = false;
     for (const b of bookings) {
       if (target && b.reference !== target) continue;
       if (b.inProgressBy) {
@@ -107,7 +137,8 @@ export class Dispatcher implements BookingDispatcher {
       }
       const skipReason = preClaimSkipReason(b);
       if (skipReason) {
-        preClaimSkipped++;
+        counter.preClaimSkipped++;
+        beyondWindow = true;
         logger.debug('Skipping booking before claim', {
           reference: b.reference,
           reason: skipReason,
@@ -130,8 +161,9 @@ export class Dispatcher implements BookingDispatcher {
         });
         continue;
       }
-      return { booking: b, preClaimSkipped };
+      return b;
     }
-    return { booking: null, preClaimSkipped };
+    // Sorted by departure: once one is beyond the window, so is every later page
+    return beyondWindow ? null : undefined;
   }
 }

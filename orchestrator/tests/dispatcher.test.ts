@@ -168,4 +168,66 @@ describe('Dispatcher', () => {
     await expect(d.next('VM1')).rejects.toThrow('network down');
     expect((await d.next('VM1')).booking?._id).toBe('a');
   });
+
+  describe('paging past a page of held bookings', () => {
+    /** Fake Bookaway list that honours `offset` like the real one (pages of 50). */
+    function pagedClient(all: BookingSummary[]) {
+      return {
+        fetchPendingBookings: vi.fn(async (offset = 0) => all.slice(offset, offset + 50).map((b) => ({ ...b }))),
+        claimBooking: vi.fn(async (_id: string) => {}),
+      };
+    }
+    const ids = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => booking(`${prefix}${i}`));
+    const farDate = () => {
+      const far = new Date();
+      far.setDate(far.getDate() + 90);
+      return far.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    };
+
+    it('takes the first free booking on a later page when the first page is all held (Nov 22, 2026)', async () => {
+      const store = new MemoryDispatchStore();
+      const held = ids(50, 'held');
+      for (const b of held) {
+        await store.reserve(b._id, b.reference, 'VM1', 0);
+        await store.finish(b._id, 'VM1', Date.now() + 86_400_000, 0);
+      }
+      const client = pagedClient([...held, ...ids(30, 'free')]);
+      const d = new Dispatcher(client, store);
+
+      expect((await d.next('VM2')).booking?._id).toBe('free0');
+      expect(client.fetchPendingBookings.mock.calls.map((c) => c[0])).toEqual([0, 50]);
+    });
+
+    it('treats bookings claimed by someone else like held ones and pages on', async () => {
+      const claimed = ids(50, 'c').map((b) => ({ ...b, inProgressBy: 'someone@bookaway.com' }));
+      const client = pagedClient([...claimed, booking('free')]);
+
+      expect((await new Dispatcher(client).next('VM1')).booking?._id).toBe('free');
+    });
+
+    it('fetches one page only when it has a free booking', async () => {
+      const client = pagedClient(ids(120, 'b'));
+      await new Dispatcher(client).next('VM1');
+      expect(client.fetchPendingBookings).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops paging at the first booking beyond the 2-month window (the list is sorted by departure)', async () => {
+      const claimed = ids(50, 'c').map((b) => ({ ...b, inProgressBy: 'x' }));
+      const far = ids(50, 'far').map((b) => ({ ...b, misc: { departureDate: farDate() } } as BookingSummary));
+      const client = pagedClient([...claimed, ...far, ...ids(50, 'never')]);
+
+      const pick = await new Dispatcher(client).next('VM1');
+      expect(pick.booking).toBeNull();
+      expect(pick.preClaimSkipped).toBe(50);
+      expect(client.fetchPendingBookings).toHaveBeenCalledTimes(2);
+    });
+
+    it('gives up after MAX_PAGES pages', async () => {
+      const claimed = ids(50 * 25, 'c').map((b) => ({ ...b, inProgressBy: 'x' }));
+      const client = pagedClient(claimed);
+
+      expect((await new Dispatcher(client).next('VM1')).booking).toBeNull();
+      expect(client.fetchPendingBookings).toHaveBeenCalledTimes(20);
+    });
+  });
 });
