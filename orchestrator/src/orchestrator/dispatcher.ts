@@ -2,6 +2,12 @@ import type { BookawayClient } from '../bookaway/client.js';
 import type { BookingSummary } from '../bookaway/types.js';
 import { logger } from '../utils/logger.js';
 import { isDepartureWithinWindow } from '../utils/time.js';
+import {
+  MemoryDispatchStore,
+  UNTIL_AGENT_RESTART,
+  type DispatchStore,
+  type RegisterResult,
+} from './dispatch-store.js';
 
 /**
  * Decide from the list response alone whether a booking is worth claiming.
@@ -16,8 +22,11 @@ export function preClaimSkipReason(booking: BookingSummary): string | null {
   return null;
 }
 
-/** Hold a booking until the orchestrator restarts (a human must look at it). */
-export const HOLD_UNTIL_RESTART = Number.POSITIVE_INFINITY;
+/** Hold a booking until the agent's worker restarts (a human must look at it). */
+export const HOLD_UNTIL_RESTART = UNTIL_AGENT_RESTART;
+
+/** How long a booking stays held when its agent restarted mid-booking. */
+export const INTERRUPTED_HOLD_MS = 24 * 3_600_000;
 
 export interface DispatchResult {
   booking: BookingSummary | null;
@@ -26,58 +35,64 @@ export interface DispatchResult {
 }
 
 /**
+ * What a worker needs from a dispatcher — implemented in-process by
+ * `Dispatcher` and over HTTPS by `RemoteDispatcher` (the cloud service).
+ */
+export interface BookingDispatcher {
+  /** Pick and claim the next booking for `agent`; `booking: null` when none is ready. */
+  next(agent: string, targetBooking?: string): Promise<DispatchResult>;
+  /** The agent is done with a booking; keep it out of the queue for `holdMs` (HOLD_UNTIL_RESTART allowed). */
+  finish(bookingId: string, agent: string, holdMs: number): Promise<void>;
+  /** The agent's worker is starting. */
+  register(agent: string): Promise<RegisterResult>;
+}
+
+/**
  * Hands bookings to RPA agents, one at a time.
  *
- * The orchestrator is the only process that claims OceanJet bookings, and
- * every pick goes through `next()`, which runs strictly one call at a time:
- * fetch a fresh list → choose the earliest-departure booking nobody holds →
- * claim it → mark it in flight. Two agents can therefore never receive the
- * same booking, without relying on Bookaway's claim being atomic.
+ * Every pick goes through `next()`, which runs strictly one call at a time
+ * within this process: fetch a fresh list → choose the earliest-departure
+ * booking nobody holds → reserve it in the store → claim it in Bookaway.
+ * The store's reservation is atomic, so two agents never receive the same
+ * booking — without relying on Bookaway's claim being atomic.
  */
-export class Dispatcher {
+export class Dispatcher implements BookingDispatcher {
   private chain: Promise<unknown> = Promise.resolve();
-  private inFlight = new Set<string>();
-  /** bookingId → epoch ms before which it is not handed out again. */
-  private holds = new Map<string, number>();
 
   constructor(
     private client: Pick<BookawayClient, 'fetchPendingBookings' | 'claimBooking'>,
-    private options: { targetBooking?: string; now?: () => number } = {}
+    private store: DispatchStore = new MemoryDispatchStore(),
+    private options: { now?: () => number } = {}
   ) {}
 
-  /** Pick and claim the next booking for an agent; `booking: null` when none is ready. */
-  next(): Promise<DispatchResult> {
-    const run = this.chain.then(() => this.pick());
+  next(agent: string, targetBooking?: string): Promise<DispatchResult> {
+    const run = this.chain.then(() => this.pick(agent, targetBooking));
     // Keep the chain alive whether this pick succeeds or throws
     this.chain = run.catch(() => undefined);
     return run;
   }
 
-  /**
-   * Report that an agent is done with a booking. `holdMs` keeps it from being
-   * handed out again for that long (HOLD_UNTIL_RESTART for the rest of the run).
-   */
-  finish(bookingId: string, holdMs: number): void {
-    this.inFlight.delete(bookingId);
-    if (holdMs > 0) this.holds.set(bookingId, this.now() + holdMs);
+  async finish(bookingId: string, agent: string, holdMs: number): Promise<void> {
+    const now = this.now();
+    const until = holdMs === HOLD_UNTIL_RESTART ? HOLD_UNTIL_RESTART : now + holdMs;
+    await this.store.finish(bookingId, agent, until, now);
   }
 
-  get inFlightCount(): number {
-    return this.inFlight.size;
+  async register(agent: string): Promise<RegisterResult> {
+    const now = this.now();
+    return this.store.registerAgent(agent, now, now + INTERRUPTED_HOLD_MS);
   }
 
   private now(): number {
     return this.options.now ? this.options.now() : Date.now();
   }
 
-  private async pick(): Promise<DispatchResult> {
+  private async pick(agent: string, target?: string): Promise<DispatchResult> {
     const now = this.now();
-    for (const [id, until] of this.holds) {
-      if (now >= until) this.holds.delete(id);
-    }
-
-    const bookings = await this.client.fetchPendingBookings();
-    const target = this.options.targetBooking;
+    const [bookings, taken] = await Promise.all([
+      this.client.fetchPendingBookings(),
+      this.store.active(now),
+    ]);
     let preClaimSkipped = 0;
 
     for (const b of bookings) {
@@ -86,10 +101,8 @@ export class Dispatcher {
         logger.debug('Skipping claimed booking', { reference: b.reference, claimedBy: b.inProgressBy });
         continue;
       }
-      if (this.inFlight.has(b._id)) continue;
-      const holdUntil = this.holds.get(b._id);
-      if (holdUntil !== undefined && now < holdUntil) {
-        logger.debug('Skipping held booking', { reference: b.reference });
+      if (taken.has(b._id)) {
+        logger.debug('Skipping booking in flight or held', { reference: b.reference });
         continue;
       }
       const skipReason = preClaimSkipReason(b);
@@ -103,13 +116,14 @@ export class Dispatcher {
         continue;
       }
 
-      this.inFlight.add(b._id);
+      // Atomic: if another caller reserved it a moment ago, move on
+      if (!(await this.store.reserve(b._id, b.reference, agent, now))) continue;
+
       try {
         await this.client.claimBooking(b._id);
       } catch (error: any) {
-        this.inFlight.delete(b._id);
-        // Leave it for the next poll rather than hammering a failing claim
-        this.holds.set(b._id, now + 60_000);
+        // Leave it for a later pick rather than hammering a failing claim
+        await this.store.finish(b._id, agent, now + 60_000, now).catch(() => undefined);
         logger.error('Failed to claim booking, trying the next one', {
           reference: b.reference,
           error: error.message,

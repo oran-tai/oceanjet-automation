@@ -5,9 +5,17 @@ import type { OperatorModule } from '../operators/types.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { processBooking, type ProcessResult } from './processor.js';
-import { notifyPollCycleSummary, notifySystemFailure } from '../notifications/slack.js';
+import {
+  notifyPollCycleSummary,
+  notifySystemFailure,
+  notifyDispatcherUnreachable,
+  notifyInterruptedBookings,
+} from '../notifications/slack.js';
 import { trackEvent } from '../events/bigquery.js';
-import { Dispatcher, HOLD_UNTIL_RESTART } from './dispatcher.js';
+import { Dispatcher, HOLD_UNTIL_RESTART, type BookingDispatcher } from './dispatcher.js';
+
+/** How long a worker may fail to get bookings from a remote dispatcher before alerting. */
+const DISPATCHER_ALERT_AFTER_MS = 5 * 60_000;
 
 export { preClaimSkipReason } from './dispatcher.js';
 
@@ -66,7 +74,8 @@ async function readyAgents(operators: OperatorModule[]): Promise<OperatorModule[
 
 export async function startOrchestrator(
   client: BookawayClient,
-  operators: OperatorModule[]
+  operators: OperatorModule[],
+  remoteDispatcher?: BookingDispatcher
 ): Promise<void> {
   const state = { running: true };
 
@@ -85,7 +94,28 @@ export async function startOrchestrator(
     throw new Error('No RPA agent is ready — nothing to dispatch to');
   }
 
-  await runAgents(client, ready, { state });
+  const dispatcher = remoteDispatcher ?? new Dispatcher(client);
+
+  // Tell the dispatcher each agent is (re)starting: bookings it had in flight
+  // when it last stopped are held for review, its system-error holds clear
+  for (const op of ready) {
+    const agent = agentId(op);
+    const { interrupted, cleared } = await dispatcher.register(agent);
+    if (cleared.length > 0) {
+      logger.info('Released bookings held after a system error on this agent', { agent, cleared });
+    }
+    if (interrupted.length > 0) {
+      logger.warn('Agent restarted while bookings were in flight — held for review', { agent, interrupted });
+      await notifyInterruptedBookings(agent, interrupted);
+    }
+  }
+
+  await runAgents(client, ready, { state, dispatcher, remote: Boolean(remoteDispatcher) });
+}
+
+/** The name an agent is known by to the dispatcher. */
+function agentId(op: OperatorModule): string {
+  return op.name ?? 'rpa';
 }
 
 export interface RunOptions {
@@ -93,6 +123,10 @@ export interface RunOptions {
   state?: { running: boolean };
   /** Returns true when a manual stop was requested. Defaults to the .stop file. */
   stopRequested?: () => boolean;
+  /** Where bookings come from. Defaults to an in-process Dispatcher. */
+  dispatcher?: BookingDispatcher;
+  /** True when the dispatcher is the cloud service (alerts if it stays unreachable). */
+  remote?: boolean;
 }
 
 /**
@@ -107,7 +141,10 @@ export async function runAgents(
 ): Promise<void> {
   const state = options.state ?? { running: true };
   const stopRequested = options.stopRequested ?? consumeStopFile;
-  const dispatcher = new Dispatcher(client, { targetBooking: config.targetBooking });
+  const dispatcher = options.dispatcher ?? new Dispatcher(client);
+  const targetBooking = config.targetBooking || undefined;
+  // Workers of this process currently booking (the summary waits for all to go idle)
+  let busy = 0;
 
   logger.info('Orchestrator started', {
     agents: operators.map((op) => op.name ?? 'rpa'),
@@ -143,7 +180,9 @@ export async function runAgents(
   let agentsStoppedOnSystemError = 0;
 
   const runAgent = async (operator: OperatorModule) => {
-    const agent = operator.name ?? 'rpa';
+    const agent = agentId(operator);
+    let failingSince: number | null = null;
+    let alerted = false;
 
     while (state.running) {
       if (stopRequested()) {
@@ -153,7 +192,12 @@ export async function runAgents(
 
       let booking;
       try {
-        const pick = await dispatcher.next();
+        const pick = await dispatcher.next(agent, targetBooking);
+        if (failingSince !== null) {
+          logger.info('Getting bookings again', { agent, downForSec: Math.round((Date.now() - failingSince) / 1000) });
+          failingSince = null;
+          alerted = false;
+        }
         booking = pick.booking;
         if (!booking) {
           const skippedNote = pick.preClaimSkipped > 0
@@ -162,17 +206,24 @@ export async function runAgents(
           logger.info(`No unclaimed bookings, waiting...${skippedNote}`, { agent });
         }
       } catch (error: any) {
-        // Error fetching bookings — likely auth or network issue
+        // Bookaway or the dispatcher service unreachable — wait and retry,
+        // never book without the dispatcher (that could double-book)
         logger.error('Error fetching bookings', { agent, error: error.message });
+        failingSince ??= Date.now();
+        if (options.remote && !alerted && Date.now() - failingSince >= DISPATCHER_ALERT_AFTER_MS) {
+          alerted = true;
+          await notifyDispatcherUnreachable(agent, error.message);
+        }
         await sleep(config.polling.intervalMs);
         continue;
       }
 
       if (!booking) {
-        if (dispatcher.inFlightCount === 0) await flushSummary();
+        if (busy === 0) await flushSummary();
         await sleep(config.polling.intervalMs);
         continue;
       }
+      busy++;
 
       // A claimed booking is always processed, even if a stop arrived meanwhile
       logger.info('Booking assigned', { agent, reference: booking.reference });
@@ -197,7 +248,17 @@ export async function runAgents(
         result = { status: 'booking-error', reason: error.message };
         holdMs = HOLD_UNTIL_RESTART;
       }
-      dispatcher.finish(booking._id, holdMs);
+      busy--;
+      try {
+        await dispatcher.finish(booking._id, agent, holdMs);
+      } catch (error: any) {
+        // The booking stays "in flight" at the dispatcher — nobody else gets it
+        logger.error('Could not report the result to the dispatcher; booking stays reserved', {
+          agent,
+          reference: booking.reference,
+          error: error.message,
+        });
+      }
 
       switch (result.status) {
         case 'approved': summary.approved.push(booking.reference); break;

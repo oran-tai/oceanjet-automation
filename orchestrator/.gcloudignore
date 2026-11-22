@@ -1,0 +1,17 @@
+# Files never uploaded by `gcloud run deploy --source`.
+# Secrets stay on the VMs / in Secret Manager.
+.env
+.env.*
+!.env.example
+*.json.key
+*-key.json
+node_modules/
+dist/
+logs/
+*.log
+.stop
+.DS_Store
+tests/
+scripts/
+start.bat
+.gcloudignore

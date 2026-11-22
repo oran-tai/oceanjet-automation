@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { BookingSummary } from '../src/bookaway/types.js';
-import { Dispatcher, HOLD_UNTIL_RESTART } from '../src/orchestrator/dispatcher.js';
+import { Dispatcher, HOLD_UNTIL_RESTART, INTERRUPTED_HOLD_MS } from '../src/orchestrator/dispatcher.js';
+import { MemoryDispatchStore } from '../src/orchestrator/dispatch-store.js';
 
 function booking(id: string, extra: Partial<BookingSummary> = {}): BookingSummary {
   return { _id: id, reference: `BW-${id}`, status: 'pending', inProgressBy: null, items: [], ...extra };
@@ -29,11 +30,21 @@ describe('Dispatcher', () => {
     const client = laggingClient([booking('a'), booking('b'), booking('c')]);
     const d = new Dispatcher(client);
 
-    const picks = await Promise.all([d.next(), d.next(), d.next()]);
+    const picks = await Promise.all([d.next('VM1'), d.next('VM2'), d.next('VM3')]);
 
     expect(picks.map((p) => p.booking?._id)).toEqual(['a', 'b', 'c']);
     expect(client.claimBooking).toHaveBeenCalledTimes(3);
-    expect(d.inFlightCount).toBe(3);
+  });
+
+  it('never hands out the same booking from two dispatchers sharing one store (two service instances)', async () => {
+    const store = new MemoryDispatchStore();
+    const list = [booking('a'), booking('b')];
+    const d1 = new Dispatcher(laggingClient(list), store);
+    const d2 = new Dispatcher(laggingClient(list), store);
+
+    const picks = await Promise.all([d1.next('VM1'), d2.next('VM2')]);
+
+    expect(picks.map((p) => p.booking?._id).sort()).toEqual(['a', 'b']);
   });
 
   it('runs picks one at a time: each fetch starts after the previous claim', async () => {
@@ -51,67 +62,89 @@ describe('Dispatcher', () => {
     };
     const d = new Dispatcher(client);
 
-    await Promise.all([d.next(), d.next()]);
+    await Promise.all([d.next('VM1'), d.next('VM2')]);
 
     expect(order).toEqual(['fetch', 'claim a', 'fetch', 'claim b']);
   });
 
   it('returns null when every booking is taken', async () => {
     const d = new Dispatcher(laggingClient([booking('a')]));
-    expect((await d.next()).booking?._id).toBe('a');
-    expect((await d.next()).booking).toBeNull();
+    expect((await d.next('VM1')).booking?._id).toBe('a');
+    expect((await d.next('VM2')).booking).toBeNull();
   });
 
   it('skips bookings someone else has claimed in Bookaway', async () => {
     const d = new Dispatcher(laggingClient([booking('a', { inProgressBy: 'agent@bookaway.com' }), booking('b')]));
-    expect((await d.next()).booking?._id).toBe('b');
+    expect((await d.next('VM1')).booking?._id).toBe('b');
   });
 
   it('holds a finished booking for the given time, then offers it again', async () => {
     let now = 1_000;
-    const d = new Dispatcher(laggingClient([booking('a')]), { now: () => now });
+    const d = new Dispatcher(laggingClient([booking('a')]), new MemoryDispatchStore(), { now: () => now });
 
-    await d.next();
-    d.finish('a', 500);
-    expect(d.inFlightCount).toBe(0);
+    await d.next('VM1');
+    await d.finish('a', 'VM1', 500);
 
     now = 1_499;
-    expect((await d.next()).booking).toBeNull();
+    expect((await d.next('VM1')).booking).toBeNull();
     now = 1_500;
-    expect((await d.next()).booking?._id).toBe('a');
-  });
-
-  it('holds a system-error booking until restart', async () => {
-    let now = 1_000;
-    const d = new Dispatcher(laggingClient([booking('a')]), { now: () => now });
-
-    await d.next();
-    d.finish('a', HOLD_UNTIL_RESTART);
-    now += 365 * 24 * 3_600_000;
-
-    expect((await d.next()).booking).toBeNull();
+    expect((await d.next('VM1')).booking?._id).toBe('a');
   });
 
   it('offers a finished booking at once when no hold is given', async () => {
     const d = new Dispatcher(laggingClient([booking('a')]));
-    await d.next();
-    d.finish('a', 0);
-    expect((await d.next()).booking?._id).toBe('a');
+    await d.next('VM1');
+    await d.finish('a', 'VM1', 0);
+    expect((await d.next('VM2')).booking?._id).toBe('a');
+  });
+
+  it('holds a system-error booking until that agent restarts — not for the other agent', async () => {
+    let now = 1_000;
+    const d = new Dispatcher(laggingClient([booking('a')]), new MemoryDispatchStore(), { now: () => now });
+
+    await d.next('VM1');
+    await d.finish('a', 'VM1', HOLD_UNTIL_RESTART);
+    now += 365 * 24 * 3_600_000;
+    expect((await d.next('VM2')).booking).toBeNull();
+
+    // Another agent restarting changes nothing
+    expect(await d.register('VM2')).toEqual({ interrupted: [], cleared: [] });
+    expect((await d.next('VM2')).booking).toBeNull();
+
+    // A human restarted VM1 after looking → the hold clears
+    expect(await d.register('VM1')).toEqual({ interrupted: [], cleared: ['BW-a'] });
+    expect((await d.next('VM2')).booking?._id).toBe('a');
+  });
+
+  it('holds bookings an agent had in flight when it restarts, for 24h', async () => {
+    let now = 1_000;
+    const d = new Dispatcher(laggingClient([booking('a')]), new MemoryDispatchStore(), { now: () => now });
+
+    await d.next('VM1'); // VM1 crashes mid-booking — no finish
+    expect(await d.register('VM1')).toEqual({ interrupted: ['BW-a'], cleared: [] });
+
+    now += INTERRUPTED_HOLD_MS - 1;
+    expect((await d.next('VM2')).booking).toBeNull();
+    now += 1;
+    expect((await d.next('VM2')).booking?._id).toBe('a');
   });
 
   it('only offers the target booking when one is set', async () => {
-    const d = new Dispatcher(laggingClient([booking('a'), booking('b')]), { targetBooking: 'BW-b' });
-    expect((await d.next()).booking?._id).toBe('b');
-    expect((await d.next()).booking).toBeNull();
+    const d = new Dispatcher(laggingClient([booking('a'), booking('b')]));
+    expect((await d.next('VM1', 'BW-b')).booking?._id).toBe('b');
+    expect((await d.next('VM1', 'BW-b')).booking).toBeNull();
   });
 
-  it('moves on to the next booking when a claim fails', async () => {
+  it('moves on to the next booking when a claim fails, and holds the failed one briefly', async () => {
+    let now = 1_000;
     const client = laggingClient([booking('a'), booking('b')]);
     client.claimBooking.mockRejectedValueOnce(new Error('502 Bad Gateway'));
-    const d = new Dispatcher(client);
+    const d = new Dispatcher(client, new MemoryDispatchStore(), { now: () => now });
 
-    expect((await d.next()).booking?._id).toBe('b');
-    expect(d.inFlightCount).toBe(1);
+    expect((await d.next('VM1')).booking?._id).toBe('b');
+    expect((await d.next('VM2')).booking).toBeNull();
+    now += 60_000;
+    expect((await d.next('VM2')).booking?._id).toBe('a');
   });
 
   it('skips bookings departing beyond the 2-month window without claiming them', async () => {
@@ -121,7 +154,7 @@ describe('Dispatcher', () => {
     const client = laggingClient([booking('a', { misc: { departureDate: farDate } } as Partial<BookingSummary>)]);
     const d = new Dispatcher(client);
 
-    const pick = await d.next();
+    const pick = await d.next('VM1');
     expect(pick.booking).toBeNull();
     expect(pick.preClaimSkipped).toBe(1);
     expect(client.claimBooking).not.toHaveBeenCalled();
@@ -132,7 +165,7 @@ describe('Dispatcher', () => {
     client.fetchPendingBookings.mockRejectedValueOnce(new Error('network down'));
     const d = new Dispatcher(client);
 
-    await expect(d.next()).rejects.toThrow('network down');
-    expect((await d.next()).booking?._id).toBe('a');
+    await expect(d.next('VM1')).rejects.toThrow('network down');
+    expect((await d.next('VM1')).booking?._id).toBe('a');
   });
 });

@@ -87,6 +87,30 @@ export async function notifySystemFailure(
   await sendSlackMessage(message);
 }
 
+/** A VM's worker cannot get bookings from the cloud dispatcher; it keeps retrying. */
+export async function notifyDispatcherUnreachable(agent: string, error: string): Promise<void> {
+  const message =
+    `:rotating_light: *Dispatcher Unreachable — ${agent} Paused*\n` +
+    `*Error:* ${error}\n` +
+    `${agent} has not been able to get bookings from the OceanJet dispatcher for 5 minutes. ` +
+    `It keeps retrying and resumes on its own; no booking is made without the dispatcher.`;
+  logger.error('Dispatcher unreachable alert', { agent, error });
+  await sendSlackMessage(message);
+}
+
+/** An agent restarted while bookings were in flight — tickets may exist. */
+export async function notifyInterruptedBookings(agent: string, references: string[]): Promise<void> {
+  const message =
+    `:warning: *Interrupted Booking — Manual Review Required*\n` +
+    `*Agent:* ${agent}\n` +
+    `*Bookings:* ${references.join(', ')}\n` +
+    `${agent} stopped while booking these (VM restart, crash or closed window). ` +
+    `Check PRIME on ${agent} for issued tickets and finish them in Bookaway. ` +
+    `The automation will not touch them for 24 hours.`;
+  logger.warn('Interrupted booking alert', { agent, references });
+  await sendSlackMessage(message);
+}
+
 export async function notifyPartialFailure(
   reference: string,
   bookingId: string,

@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { hostname } from 'os';
 import { parseAgentList } from './utils/agent-list.js';
 
 dotenv.config();
@@ -48,6 +49,14 @@ export const config = {
     /** Every RPA agent the orchestrator dispatches to (one PRIME session each). */
     agents: parseAgentList(process.env.RPA_AGENT_URLS, process.env.RPA_AGENT_URL),
     authToken: (process.env.RPA_AUTH_TOKEN || '').trim(),
+  },
+  dispatcher: {
+    /** Cloud dispatcher service URL. Empty = this orchestrator picks bookings itself. */
+    url: (process.env.DISPATCHER_URL || '').trim(),
+    /** Service-account key used to call it (defaults to the BigQuery key). */
+    keyFile: (process.env.DISPATCHER_KEY_FILE || process.env.BQ_KEY_FILE || '').trim(),
+    /** This VM's name at the dispatcher and in alerts (default: the machine name). */
+    agentName: (process.env.DISPATCHER_AGENT_NAME || hostname()).trim(),
   },
   pacing: {
     bookingDelayMinMs: parseInt(process.env.BOOKING_DELAY_MIN_MS || '90000', 10),  // 1.5 min
