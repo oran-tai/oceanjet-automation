@@ -200,10 +200,19 @@ export async function runAgents(
         }
         booking = pick.booking;
         if (!booking) {
-          const skippedNote = pick.preClaimSkipped > 0
-            ? ` (${pick.preClaimSkipped} skipped before claim: departure beyond 2-month window)`
-            : '';
-          logger.info(`No unclaimed bookings, waiting...${skippedNote}`, { agent });
+          if (targetBooking) {
+            // Say so plainly — a forgotten TARGET_BOOKING otherwise looks like an empty queue
+            logger.info(
+              `Waiting for target booking ${targetBooking} (not pending, or claimed/held) — ` +
+                'clear TARGET_BOOKING in .env to take all bookings',
+              { agent }
+            );
+          } else {
+            const skippedNote = pick.preClaimSkipped > 0
+              ? ` (${pick.preClaimSkipped} skipped before claim: departure beyond 2-month window)`
+              : '';
+            logger.info(`No unclaimed bookings, waiting...${skippedNote}`, { agent });
+          }
         }
       } catch (error: any) {
         // Bookaway or the dispatcher service unreachable — wait and retry,
