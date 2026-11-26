@@ -99,10 +99,23 @@ export class BookawayClient {
     return bookings;
   }
 
+  /**
+   * Read one booking. Retries transient failures (5xx, network) so a single
+   * dropped connection on this read never stops an agent (Nov 25, 2026: one
+   * ECONNRESET here stopped VM1 before the booking reached PRIME).
+   */
   async fetchBookingDetails(bookingId: string): Promise<BookingDetail> {
     logger.info('Fetching booking details', { bookingId });
-    const response = await this.client.get<BookingDetail>(
-      `/bookings/bookings/${bookingId}`
+    const response = await withRetry(
+      () => this.client.get<BookingDetail>(`/bookings/bookings/${bookingId}`),
+      {
+        retries: 2,
+        onRetry: (attempt, error: any) =>
+          logger.warn(`Fetching booking details failed, retrying (${attempt}/2)`, {
+            bookingId,
+            error: error?.message,
+          }),
+      }
     );
     return response.data;
   }
