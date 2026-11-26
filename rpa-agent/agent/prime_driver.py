@@ -2609,21 +2609,37 @@ class PrimeDriver:
                         if voyage_result and voyage_result.get("arrival_time"):
                             last_arrival_time = voyage_result["arrival_time"]
 
-                        # A popup right after the trip fill (e.g. 'No Business
-                        # Class Seats Available.' once the class is selected)
-                        # means sold out — fail before typing the passenger.
+                        # Sold-out popup, look 1 of 3 — the main one. A popup
+                        # right after the trip fill (e.g. 'No Business Class
+                        # Seats Available.' once the class is selected) means
+                        # sold out: fail before typing the passenger.
+                        # Validated on the VM Nov 26, 2026 (popup up ~0.5s
+                        # after the class select, first passenger).
                         if self._form_popup_present():
                             self._check_sold_out_after_voyage()
 
                         try:
                             self.fill_personal_details(pax, contact_info)
                         except _ctypes.COMError:
-                            # COMError means a popup is blocking the form (e.g. sold out)
+                            # Look 2 of 3 — the original signal, kept as a
+                            # net. Reached only when the Sex typed select
+                            # fails and the list select runs with a popup
+                            # up: that select raises COMError (probe, Nov
+                            # 26, 2026). Keep while the list select is the
+                            # Sex fallback; without this the COMError would
+                            # leave here unclassified.
                             self._check_sold_out_after_voyage()
 
-                        # Second look before Issue: catches a popup that
-                        # painted after the first look. The Sex typed select
-                        # does not notice it (Nov 26, 2026 probe).
+                        # Look 3 of 3 — a net for what look 1 has not been
+                        # shown to cover: a popup that paints later than
+                        # look 1, and passengers 2+ (voyage-only mode: the
+                        # class is not re-selected, popup timing unknown).
+                        # Needed because the Sex typed select works with
+                        # the popup up, so nothing else stops before Issue.
+                        # ~30ms. Redundant with look 1 for a first
+                        # passenger; removable once logs show look 1
+                        # catches every sold-out booking, passengers 2+
+                        # included.
                         if self._form_popup_present():
                             self._check_sold_out_after_voyage()
 
