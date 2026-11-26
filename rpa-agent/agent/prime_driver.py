@@ -1552,6 +1552,25 @@ class PrimeDriver:
         arrival_time = grid_rows[target_row].get("arrival_time", "")
         return {"voyage_number": voyage_number, "arrival_time": arrival_time}
 
+    def _form_popup_present(self) -> bool:
+        """True when a small PRIME-titled popup window is on the desktop.
+
+        Same lookup as _check_sold_out_after_voyage (top-level window,
+        narrower than 700px). Measured at ~30ms on the VM (Nov 26, 2026).
+        Asked directly because the Sex typed select works with the popup up
+        (probe_sex_typing_with_popup.py: 'No Business Class Seats
+        Available.' open, 'F' and 'M' both typed and verified), so the form
+        fill no longer trips over it on its own.
+        """
+        try:
+            for w in Desktop(backend="uia").windows(title_re="OCEAN FAST FERRIES.*"):
+                rect = w.rectangle()
+                if rect.right - rect.left < 700:
+                    return True
+        except Exception:
+            pass
+        return False
+
     def _check_sold_out_after_voyage(self):
         """Handle a COMError during personal details by checking for a sold-out popup.
 
@@ -1843,27 +1862,38 @@ class PrimeDriver:
         time.sleep(0.2)
 
         # Sex (combo_box[0]): map "Male" -> "M", "Female" -> "F"
-        # select() with a physical-open fallback and read-back verification.
-        # COMError propagates untouched: it's the sold-out-popup signal the
-        # caller routes to _check_sold_out_after_voyage().
+        # Typing goes first (Nov 26, 2026): the list path failed to
+        # enumerate on almost every passenger in production, costing ~12s
+        # of select() + physical-open attempts before the typed fallback
+        # landed. A drop-down-list combo selects by typed prefix with no
+        # UIA enumeration; a verified typed select skips the list path.
         gender_code = GENDER_MAP.get(passenger["gender"], passenger["gender"])
-        try:
-            self._select_combo_verified(
-                personal, 0, gender_code, "sex",
-                TicketErrorCode.PASSENGER_VALIDATION_ERROR,
-                propagate_comerror=True,
-            )
-        except PrimeError as select_error:
-            # Last resort, Sex only: type the code into the focused combo.
-            # Sept 25, 2026: the list was visibly dropped (button read
-            # 'Close') yet pywinauto enumerated no items, so both the
-            # select() and physical-open paths failed. A drop-down-list
-            # combo selects by typed prefix with no UIA enumeration.
+        if not self._select_sex_by_typing(
+            personal, gender_code, debug_screenshot=False
+        ):
             logger.warning(
-                f"Sex select failed ({select_error}); trying keyboard fallback"
+                f"Sex '{gender_code}' did not land by typing; "
+                f"falling back to the list select"
             )
-            if not self._select_sex_by_typing(personal, gender_code):
-                raise select_error
+            # List path: select() with a physical-open fallback and
+            # read-back verification. COMError propagates untouched: it's
+            # the sold-out-popup signal the caller routes to
+            # _check_sold_out_after_voyage().
+            try:
+                self._select_combo_verified(
+                    personal, 0, gender_code, "sex",
+                    TicketErrorCode.PASSENGER_VALIDATION_ERROR,
+                    propagate_comerror=True,
+                )
+            except PrimeError as select_error:
+                # Last resort: type once more — the list attempts may have
+                # changed what defeated the first typed attempt (Sept 25,
+                # 2026: list visibly dropped, pywinauto enumerated no items).
+                logger.warning(
+                    f"Sex select failed ({select_error}); trying keyboard again"
+                )
+                if not self._select_sex_by_typing(personal, gender_code):
+                    raise select_error
         time.sleep(0.2)
 
         # Contact Info (edit[0])
@@ -1873,7 +1903,8 @@ class PrimeDriver:
             send_keys(contact_info, with_spaces=True)
             time.sleep(0.2)
 
-    def _select_sex_by_typing(self, personal, code: str) -> bool:
+    def _select_sex_by_typing(self, personal, code: str,
+                              debug_screenshot: bool = True) -> bool:
         """Sex combo only: select M/F by typing the letter, verified by read-back.
 
         The Sex combo is a Win32 drop-down-list (Text + Button children). With
@@ -1886,6 +1917,8 @@ class PrimeDriver:
 
         Returns True only when the combo reads back `code`. An unreadable
         combo counts as failure — keystrokes report nothing on their own.
+        `debug_screenshot=False` skips the failure screenshot (first try,
+        where the list path still follows).
         """
         def combo():
             return personal.children(control_type="ComboBox")[0]
@@ -1914,7 +1947,8 @@ class PrimeDriver:
                 f"expected '{code}'"
             )
             time.sleep(0.5)
-        self._save_debug_screenshot("sex_keyboard_failed")
+        if debug_screenshot:
+            self._save_debug_screenshot("sex_keyboard_failed")
         return False
 
     def click_issue(self):
@@ -2575,10 +2609,22 @@ class PrimeDriver:
                         if voyage_result and voyage_result.get("arrival_time"):
                             last_arrival_time = voyage_result["arrival_time"]
 
+                        # A popup right after the trip fill (e.g. 'No Business
+                        # Class Seats Available.' once the class is selected)
+                        # means sold out — fail before typing the passenger.
+                        if self._form_popup_present():
+                            self._check_sold_out_after_voyage()
+
                         try:
                             self.fill_personal_details(pax, contact_info)
                         except _ctypes.COMError:
                             # COMError means a popup is blocking the form (e.g. sold out)
+                            self._check_sold_out_after_voyage()
+
+                        # Second look before Issue: catches a popup that
+                        # painted after the first look. The Sex typed select
+                        # does not notice it (Nov 26, 2026 probe).
+                        if self._form_popup_present():
                             self._check_sold_out_after_voyage()
 
                         # Click Issue, handle confirmation, capture ticket number(s)
